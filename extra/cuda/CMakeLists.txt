@@ -45,3 +45,33 @@ ELSE (CUDA_FOUND)
   MESSAGE(STATUS "If CUDA 4.0 is installed, then specify CUDA_TOOLKIT_ROOT_DIR")
   
 ENDIF (CUDA_FOUND)
+
+
+
+IF (WIN32 AND NOT CYGWIN)
+  SET(INSTALL_CUDA_LIBRARIES "OFF"
+    CACHE BOOL "Copy the required CUDA DLLs into the Torch install dirs")
+ENDIF (WIN32 AND NOT CYGWIN)
+
+MACRO(Install_Required_Library ln)
+    get_filename_component(libpath ${ln} PATH)
+    get_filename_component(libname ${ln} NAME_WE)
+    file(GLOB libdlls "${libpath}/../../bin/${libname}32*.dll")
+    install(PROGRAMS ${libdlls} 
+      DESTINATION "${Torch_INSTALL_BIN_SUBDIR}")
+ENDMACRO(Install_Required_Library libname)
+
+IF (CUDA_FOUND AND INSTALL_CUDA_LIBRARIES)
+  IF (CUDA_CUDART_LIBRARY)
+    Install_Required_Library(${CUDA_CUDART_LIBRARY})
+  ENDIF()
+  IF (CUDA_cublas_LIBRARY)
+    Install_Required_Library(${CUDA_cublas_LIBRARY})
+  ENDIF()
+  IF (CUDA_curand_LIBRARY)
+    Install_Required_Library(${CUDA_curand_LIBRARY})
+  ENDIF()
+  IF (CUDA_cusparse_LIBRARY)
+    Install_Required_Library(${CUDA_cusparse_LIBRARY})
+  ENDIF()
+ENDIF()

@@ -53,7 +53,10 @@ int main(int argc, char *argv[])
     return -1;
   }
 
-  if(lua_pcall(L, 0, 0, 0))
+  for(i = 1; i < argc; i++)
+    lua_pushstring(L, argv[i]);
+
+  if(lua_pcall(L, argc-1, 0, 0))
   {
     const char *msg = lua_tostring(L, -1);
     printf("error: %s\n", msg);

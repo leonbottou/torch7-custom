@@ -102,11 +102,11 @@ ENDIF (WITH_QTLUA)
 # --- install qt libraries
 
 IF (WIN32 AND NOT CYGWIN)
-  SET(QT_INSTALL_LIBRARIES "OFF"
+  SET(INSTALL_QT_LIBRARIES "OFF"
     CACHE BOOL "Copy the required Qt DLLs into the Torch install dirs")
-ENDIF (WIN32 AND NOT CYGWIN)
+ENDIF ()
 
-IF (WITH_QTLUA AND QT_INSTALL_LIBRARIES)
+IF (WITH_QTLUA AND INSTALL_QT_LIBRARIES)
   # -- turn on all the qt modules we use
   SET(QT_USE_QTUITOOLS 1)
   SET(QT_USE_QTWEBKIT 1)
@@ -115,4 +115,4 @@ IF (WITH_QTLUA AND QT_INSTALL_LIBRARIES)
   SET(QT_USE_QTSVG 1)
   # -- this takes care of the install
   INCLUDE("InstallRequiredQtLibraries")
-ENDIF (WITH_QTLUA AND QT_INSTALL_LIBRARIES)
+ENDIF ()

@@ -145,7 +145,7 @@ INSTALL(FILES
 
 
 IF (WIN32 AND NOT CYGWIN)
-  SET(BLAS_INSTALL_LIBRARIES "OFF"
+  SET(INSTALL_BLAS_LIBRARIES "OFF"
     CACHE BOOL "Copy the required BLAS DLLs into the Torch install dirs")
 ENDIF (WIN32 AND NOT CYGWIN)
 
@@ -157,7 +157,7 @@ MACRO(Install_Required_Library ln)
       DESTINATION "${Torch_INSTALL_BIN_SUBDIR}")
 ENDMACRO(Install_Required_Library libname)
 
-IF (BLAS_FOUND AND BLAS_INSTALL_LIBRARIES)
+IF (BLAS_FOUND AND INSTALL_BLAS_LIBRARIES)
   IF (BLAS_goto2_LIBRARY)
     Install_Required_Library(${BLAS_goto2_LIBRARY})
     Install_Required_Library("${libpath}/libgfortran")
@@ -166,6 +166,13 @@ IF (BLAS_FOUND AND BLAS_INSTALL_LIBRARIES)
   ENDIF()
   IF (BLAS_openblas_LIBRARY)
     Install_Required_Library(${BLAS_openblas_LIBRARY})
+    Install_Required_Library("${libpath}/libquadmath")
+    Install_Required_Library("${libpath}/libgfortran")
+    Install_Required_Library("${libpath}/libquadmath")
+    Install_Required_Library("${libpath}/libgcc")
+  ENDIF()
+  IF (BLAS_libopenblas_LIBRARY)
+    Install_Required_Library(${BLAS_libopenblas_LIBRARY})
     Install_Required_Library("${libpath}/libquadmath")
     Install_Required_Library("${libpath}/libgfortran")
     Install_Required_Library("${libpath}/libquadmath")

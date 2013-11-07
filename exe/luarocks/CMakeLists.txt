@@ -26,6 +26,9 @@ CONFIGURE_FILE("src/luarocks/config.lua.in" "${CMAKE_CURRENT_BINARY_DIR}/src/lua
 CONFIGURE_FILE("src/bin/luarocks" "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks")
 CONFIGURE_FILE("src/bin/luarocks-admin" "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks-admin")
 
+ADD_TORCH_LUA2EXE(torch-rocks "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks")
+ADD_TORCH_LUA2EXE(torch-rocks-admin "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks-admin")
+
 SET(LUAROCKS_FILES fs/unix/tools.lua fs/unix.lua fs/win32/tools.lua fs/win32.lua
   fs/lua.lua persist.lua list.lua require.lua repos.lua dir.lua make_manifest.lua
   command_line.lua install.lua build/command.lua build/cmake.lua build/make.lua
@@ -43,7 +46,21 @@ ENDFOREACH()
 
 INSTALL(FILES "${CMAKE_CURRENT_BINARY_DIR}/src/luarocks/site_config.lua" DESTINATION "${Torch_INSTALL_LUA_PATH_SUBDIR}/luarocks")
 INSTALL(FILES "${CMAKE_CURRENT_BINARY_DIR}/src/luarocks/config.lua" DESTINATION "${Torch_INSTALL_LUAROCKS_SYSCONF_SUBDIR}")
-INSTALL(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks" DESTINATION "${Torch_INSTALL_BIN_SUBDIR}")
-INSTALL(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/src/bin/torch-rocks-admin" DESTINATION "${Torch_INSTALL_BIN_SUBDIR}")
 
-INSTALL(CODE "EXEC_PROGRAM(${Torch_INSTALL_BIN}/torch-rocks ARGS install https://raw.github.com/torch/rocks/master/torch-7.scm-0.rockspec)")
+INSTALL(
+  TARGETS torch-rocks torch-rocks-admin
+  RUNTIME DESTINATION "${Torch_INSTALL_BIN_SUBDIR}"
+  LIBRARY DESTINATION "${Torch_INSTALL_LIB_SUBDIR}"
+  ARCHIVE DESTINATION "${Torch_INSTALL_LIB_SUBDIR}")
+
+
+IF (WIN32 AND NOT CYGWIN)
+ 
+  # This is not working yet
+  # INSTALL(CODE "EXEC_PROGRAM(${Torch_INSTALL_BIN}/torch-rocks ARGS install https://raw.github.com/torch/rocks/master/torch-7.scm-0.rockspec)")
+
+ELSE (WIN32 AND NOT CYGWIN)
+
+  INSTALL(CODE "EXEC_PROGRAM(${Torch_INSTALL_BIN}/torch-rocks ARGS install https://raw.github.com/torch/rocks/master/torch-7.scm-0.rockspec)")
+
+ENDIF (WIN32 AND NOT CYGWIN)
