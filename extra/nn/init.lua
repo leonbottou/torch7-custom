@@ -72,6 +72,7 @@ include('TemporalMaxPooling.lua')
 include('SpatialSubtractiveNormalization.lua')
 include('SpatialDivisiveNormalization.lua')
 include('SpatialContrastiveNormalization.lua')
+include('CrossMapNormalization.lua')
 include('SpatialZeroPadding.lua')
 
 include('VolumetricConvolution.lua')
@@ -105,3 +106,4 @@ include('StochasticGradient.lua')
 include('Jacobian.lua')
 include('hessian.lua')
 include('test.lua')
+
