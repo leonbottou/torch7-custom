@@ -2,7 +2,7 @@ local CrossMapNormalization, parent = torch.class('nn.CrossMapNormalization', 'n
 
 function CrossMapNormalization:__init(alpha, beta, k, n, dimension)
    parent.__init(self)
-   self.dimension = dimension or 3
+   self.dimension = dimension or 1
    self.alpha = alpha or 1e-4 
    self.beta = beta or 0.75
    self.k = k or 1
