@@ -10,9 +10,11 @@ function CrossMapNormalization:__init(alpha, beta, k, n, dimension)
 end
 
 function CrossMapNormalization:updateOutput(input)
-   return input.nn.CrossMapNormalization_updateOutput(self, input)
+   input.nn.CrossMapNormalization_updateOutput(self, input)
+   return output
 end
 
 function CrossMapNormalization:updateGradInput(input, gradOutput)
-   return input.nn.CrossMapNormalization_updateGradInput(self, input, gradOutput)
+   input.nn.CrossMapNormalization_updateGradInput(self, input, gradOutput)
+   return gradInput
 end
