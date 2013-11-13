@@ -10,6 +10,7 @@
 
 #include "HardTanh.cu"
 #include "Tanh.cu"
+#include "ReLU.cu"
 #include "Max.cu"
 #include "LogSoftMax.cu"
 #include "TemporalConvolution.cu"
@@ -26,6 +27,7 @@
 #include "Threshold.cu"
 #include "Sigmoid.cu"
 #include "AbsCriterion.cu"
+#include "CrossMapNormalization.cu"
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunn(lua_State *L);
 
@@ -34,6 +36,7 @@ int luaopen_libcunn(lua_State *L)
   lua_newtable(L);
 
   cunn_Tanh_init(L);
+  cunn_ReLU_init(L);
   cunn_Sigmoid_init(L);
   cunn_Max_init(L);
   cunn_HardTanh_init(L);
@@ -51,6 +54,7 @@ int luaopen_libcunn(lua_State *L)
   cunn_Threshold_init(L);
   cunn_MSECriterion_init(L);
   cunn_AbsCriterion_init(L);
+  cunn_CrossMapNormalization_init(L);
 
   return 1;
 }
