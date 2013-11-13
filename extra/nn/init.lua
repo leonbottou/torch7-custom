@@ -54,6 +54,7 @@ include('Sqrt.lua')
 include('HardShrink.lua')
 include('SoftShrink.lua')
 include('Threshold.lua')
+include('ReLU.lua')
 
 include('LookupTable.lua')
 include('SpatialConvolution.lua')
