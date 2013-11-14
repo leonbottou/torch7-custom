@@ -44,7 +44,7 @@ function TrivialConvolution:updateOutput(input)
    -- resize output
    self.output:resize(osize,msize)
    -- copy biases
-   self.output:zero():addr(1, self.bias,input.new(osize):fill(1))
+   self.output:zero():addr(1, self.bias,input.new(msize):fill(1))
    -- do matrix product
    self.output:addmm(1, self.weight, tinput)
    -- resize output
