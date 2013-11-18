@@ -27,7 +27,11 @@
 #include "Threshold.cu"
 #include "Sigmoid.cu"
 #include "AbsCriterion.cu"
+#include "Abs.cu"
+
+// local changes
 #include "CrossMapNormalization.cu"
+
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunn(lua_State *L);
 
@@ -54,6 +58,9 @@ int luaopen_libcunn(lua_State *L)
   cunn_Threshold_init(L);
   cunn_MSECriterion_init(L);
   cunn_AbsCriterion_init(L);
+  cunn_Abs_init(L);
+
+  // local changes
   cunn_CrossMapNormalization_init(L);
 
   return 1;
