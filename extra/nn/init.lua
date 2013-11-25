@@ -8,6 +8,7 @@ include('Parallel.lua')
 include('Sequential.lua')
 
 include('Linear.lua')
+include('TrivialConvolution.lua')
 include('SparseLinear.lua')
 include('Reshape.lua')
 include('Select.lua')
