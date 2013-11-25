@@ -88,6 +88,8 @@ include('JoinTable.lua')
 include('CriterionTable.lua')
 include('Identity.lua')
 
+include('ImnetAggregate.lua')
+
 include('Criterion.lua')
 include('MSECriterion.lua')
 include('MarginCriterion.lua')
