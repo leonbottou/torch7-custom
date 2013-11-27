@@ -83,10 +83,12 @@ THC_API void THCudaTensor_copy(THCudaTensor *self, THCudaTensor *src)
     THCudaTensor_computesz(self, &d_self_sz, &d_self_st);
     THCudaTensor_computesz(src, &d_src_sz, &d_src_st);
 
-    int nblocks = ceil((float)size / (16 * innermostdim ));
-    dim3 threads(16,16);
+    int nblocks = ceil((float)size / (64 * innermostdim ));
+    dim3 threads(16,64);
     dim3 grid(nblocks);
-
+	//printf("nblocks : %d, size : %d, innermostdim : %d \n", nblocks, size, innermostdim);
+	//printf("kernel copy start \n");
+	//printf("nblocks : %d ", nblocks);
     THCudaTensor_kernel_copy<<<grid, threads>>>(THCudaTensor_data(self),
                                                 d_self_sz, d_self_st, ndims,
                                                 THCudaTensor_data(src),
@@ -96,6 +98,8 @@ THC_API void THCudaTensor_copy(THCudaTensor *self, THCudaTensor *src)
     cudaError errcode = cudaGetLastError();
     if(errcode != cudaSuccess)
       THError(cudaGetErrorString(errcode));
+
+	//printf("kernel copy end \n");
 
     THCudaCheck(cudaFree(d_self_sz));
     THCudaCheck(cudaFree(d_self_st));
