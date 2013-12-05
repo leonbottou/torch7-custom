@@ -116,6 +116,9 @@
 #include "generic/ImnetAggregate.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/SpatialConvolutionNew.c"
+#include "THGenerateFloatTypes.h"
+
 LUA_EXTERNC DLL_EXPORT int luaopen_libnn(lua_State *L);
 
 int luaopen_libnn(lua_State *L)

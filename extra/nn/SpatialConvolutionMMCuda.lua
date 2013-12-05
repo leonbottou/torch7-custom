@@ -58,54 +58,62 @@ function SpatialConvolutionMMCuda:updateOutput(input)
    -- get kernels ready
    -- these are the sizes of self.weight
    local weightsizes=torch.LongStorage({self.nOutputPlane, self.nInputPlane, self.kH, self.kW})
-
+   
    local matkernels=self.weight
    matkernels:resize(weightsizes[1],weightsizes[2]*weightsizes[3]*weightsizes[4])
    matkernels=matkernels:transpose(1,2)
    
-  
+   
    local matinput=input:unfold(2,(weightsizes)[3],self.dH):unfold(3,(weightsizes)[4],self.dW):transpose(1,2):transpose(2,3)
-
+   
    local Wsize=(#matinput)[1]
    local Hsize=(#matinput)[2]
    
    -- maxwslice is here to avoid bad invalid argument (too many blocks/threads in the newmat:contiguous() call...)
-   local maxwslice=math.floor(4651200/((#matinput)[2]*(#matinput)[3]*(#matinput)[4]*(#matinput)[5]))
+   --local maxwslice=math.floor(4651200/((#matinput)[2]*(#matinput)[3]*(#matinput)[4]*(#matinput)[5]))
+   local maxwslice=math.floor(math.sqrt((65535*64)/((#matinput)[3]*(#matinput)[4])))-1
+   --print(maxwslice)
    
-  -- self.output=input.new(nOutputPlane, Wsize, Hsize)
+   -- self.output=input.new(nOutputPlane, Wsize, Hsize)
    self.output:resize(self.nOutputPlane, Wsize, Hsize)
-   for i = 1,Wsize,maxwslice do
-      local sliceWstart=i
-      local sliceWend  =math.min(i+maxwslice, Wsize)
-      local sliceW     =sliceWend-sliceWstart+1
+   for j = 1,Hsize,maxwslice do
+      local sliceHstart=j
+      local sliceHend  =math.min(j+maxwslice, Hsize)
+      local sliceH     =sliceHend-sliceHstart+1
       
-      local newmat=matinput[{{sliceWstart, sliceWend},{},{},{},{}}]
-      local newmatcontiguous = newmat:isContiguous()
-      newmat=newmat:contiguous()
-      newmat:resize(Hsize*sliceW,(#matinput)[3]*(#matinput)[4]*(#matinput)[5])
-      
-      local res=input.new((#matkernels)[2],(#newmat)[1]):zero()
-      
-      -- addr doesn't like it when the tensor is a vector...
-      if (#res)[2]==1 then
-         res:copy(self.bias)
-         res:resize((#matkernels)[2],(#newmat)[1])
-      else
-         local tmpmat=input.new((#res)[2]):fill(1)
-         res:addr(self.bias,tmpmat)
+      for i = 1,Wsize,maxwslice do
+         local sliceWstart=i
+         local sliceWend  =math.min(i+maxwslice, Wsize)
+         local sliceW     =sliceWend-sliceWstart+1
+         
+         local newmat=matinput[{{sliceWstart, sliceWend},{sliceHstart, sliceHend},{},{},{}}]
+         local newmatcontiguous = newmat:isContiguous()
+         newmat=newmat:contiguous()
+         newmat:resize(sliceH*sliceW,(#matinput)[3]*(#matinput)[4]*(#matinput)[5])
+         
+         local res=input.new((#matkernels)[2],(#newmat)[1]):zero()
+         
+         -- addr doesn't like it when the tensor is a vector...
+         if (#res)[2]==1 then
+            res:copy(self.bias)
+            res:resize((#matkernels)[2],(#newmat)[1])
+         else
+            local tmpmat=input.new((#res)[2]):fill(1)
+            res:addr(self.bias,tmpmat)
+         end
+         
+         res=res:transpose(1,2)      
+            res=res:addmm(newmat,matkernels):transpose(1,2)
+         res:resize((#matkernels)[2],sliceW,sliceH)
+         
+         local outselect=self.output:narrow(2,sliceWstart, sliceW):narrow(3,sliceHstart, sliceH)
+         outselect:copy(res)
+         
+         if not newmatcontiguous then zaptensor(newmat) end
+         if tmpmat then zaptensor(tmpmat) end
+         zaptensor(res)
+         
       end
-      
-      res=res:transpose(1,2)      
-      res=res:addmm(newmat,matkernels):transpose(1,2)
-      res:resize((#matkernels)[2],sliceW,Hsize)
-      
-      local outselect=self.output:narrow(2,sliceWstart, sliceW)
-      outselect:copy(res)
-      
-      if not newmatcontiguous then zaptensor(newmat) end
-      if tmpmat then zaptensor(tmpmat) end
-      zaptensor(res)
-      
    end
    
    self.weight:resize(weightsizes)
@@ -122,3 +130,4 @@ end
 function SpatialConvolutionMMCuda:accGradParameters(input, gradOutput, scale)
    return input.nn.SpatialConvolutionMMCuda_accGradParameters(self, input, gradOutput, scale)
 end
+

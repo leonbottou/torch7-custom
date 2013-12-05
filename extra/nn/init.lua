@@ -60,6 +60,7 @@ include('Affine.lua')
 
 include('LookupTable.lua')
 include('SpatialConvolution.lua')
+include('SpatialConvolutionNew.lua')
 include('SpatialFullConvolution.lua')
 include('SpatialFullConvolutionMap.lua')
 include('SpatialConvolutionMM.lua')
