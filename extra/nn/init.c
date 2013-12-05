@@ -164,6 +164,7 @@ int luaopen_libnn(lua_State *L)
   nn_FloatCrossMapNormalization_init(L);
   nn_FloatReLU_init(L);
   nn_FloatImnetAggregate_init(L);
+  nn_FloatSpatialConvolutionNew_init(L);
 
   nn_DoubleMin_init(L);
   nn_DoubleMax_init(L);
@@ -202,6 +203,7 @@ int luaopen_libnn(lua_State *L)
   nn_DoubleCrossMapNormalization_init(L);
   nn_DoubleReLU_init(L);
   nn_DoubleImnetAggregate_init(L);
+  nn_DoubleSpatialConvolutionNew_init(L);
 
   return 1;
 }

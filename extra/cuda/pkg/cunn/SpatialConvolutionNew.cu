@@ -8,10 +8,10 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	const int blk =blockDim.x;
 	const int tidx=threadIdx.x;
 
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
 
 	int i;
 	int j;
@@ -19,17 +19,18 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 
 	ptrinput   += (pixi * isize2 + pixj) * nInputPlane ;
 	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+
+	int stridej = (kH*kW - dW) * nInputPlane;
+	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
 	
 	for(i=imin; i<imax+1; i++) {
-
-	// this optimization on kerneloffset doesn't actually work, do it again from scratch
 		for(j=jmin; j<jmax+1; j++) {
 			for(k=0; k<valuesperthread; k++) {
 				ptrkslices[k*blk+tidx]=ptrinput[k*blk+tidx];
 			}
-			ptrkslices += (kH*kW - dW) * nInputPlane;
+			ptrkslices += stridej;
 		}
-		ptrkslices += (size2*kH - dH) * kW * nInputPlane;
+		ptrkslices += stridei;
 	}	
 }
 
