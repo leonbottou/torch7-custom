@@ -1,6 +1,6 @@
 local SpatialConvolutionNew, parent = torch.class('nn.SpatialConvolutionNew', 'nn.Module')
 
-function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH)
+function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem)
    parent.__init(self)
 
    dW = dW or 1
@@ -12,6 +12,8 @@ function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH)
    self.kH = kH
    self.dW = dW
    self.dH = dH
+   self.shdmem = shdmem or 1
+   self.kslicestest = torch.Tensor()
 
    self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
    self.bias = torch.Tensor(nOutputPlane)
