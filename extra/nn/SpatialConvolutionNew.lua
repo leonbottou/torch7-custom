@@ -1,6 +1,6 @@
 local SpatialConvolutionNew, parent = torch.class('nn.SpatialConvolutionNew', 'nn.Module')
 
-function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem)
+function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem, padleft, padright, padup, paddown)
    parent.__init(self)
 
    dW = dW or 1
@@ -12,8 +12,12 @@ function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH,
    self.kH = kH
    self.dW = dW
    self.dH = dH
+   self.padleft = padleft or 0
+   self.padright = padright or 0
+   self.padup = padup or 0
+   self.paddown = paddown or 0
    self.shdmem = shdmem or 1
-   self.kslicestest = torch.Tensor()
+--   self.kslicestest = torch.Tensor()
 
    self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
    self.bias = torch.Tensor(nOutputPlane)
@@ -43,7 +47,8 @@ function SpatialConvolutionNew:reset(stdv)
 end
 
 function SpatialConvolutionNew:updateOutput(input)
-   return input.nn.SpatialConvolutionNew_updateOutput(self, input)
+   input.nn.SpatialConvolutionNew_updateOutput(self, input)
+   return self.output
 end
 
 function SpatialConvolutionNew:updateGradInput(input, gradOutput)

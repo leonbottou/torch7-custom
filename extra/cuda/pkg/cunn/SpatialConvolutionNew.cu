@@ -8,7 +8,7 @@
 
 
 __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread)
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
 {
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
@@ -24,7 +24,9 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	int j;
 	int k;
 
-	ptrinput   += (pixi * isize2 + pixj) * nInputPlane ;
+	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+	
+	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
 	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
 	int stridej = (kH*kW - dW) * nInputPlane;
@@ -32,8 +34,16 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	
 	for(i=imin; i<imax+1; i++) {
 		for(j=jmin; j<jmax+1; j++) {
-			for(k=0; k<valuesperthread; k++) {
-				ptrkslices[k*blk+tidx]=ptrinput[k*blk+tidx];
+			if(zeropad) 
+			{
+				for(k=0; k<valuesperthread; k++) {
+					ptrkslices[k*blk+tidx]=0;
+				}
+			}
+			else {
+				for(k=0; k<valuesperthread; k++) {
+					ptrkslices[k*blk+tidx]=ptrinput[k*blk+tidx];
+				}
 			}
 			ptrkslices += stridej;
 		}
@@ -43,42 +53,62 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 
 
 template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread)
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
 {
+	// each block does one pixel of the input image
+	// each kernel slice is represented by its upper-left coordinates
+
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
 	const int blk =blockDim.x;
 	const int tidx=threadIdx.x;
 
-	__shared__ float pixvalues[maxnumplanes];
+	int i,j,k;
 
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
 
-	int i;
-	int j;
-	int k;
 
-	ptrinput   += (pixi * isize2 + pixj) * nInputPlane ;
+	// step 1 : find which kernel slices contain the values of the pixel
+        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+
+	// step 2 : move the pointers
+	// this one goes to where the pixel is at
+	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	// this one goes to the first pixel of the first kernel slice
 	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-
-
+	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+	// read pixel
 	// load the stuff in shared memory first...
-	for(k=0; k<valuesperthread; k++) {
-		pixvalues[k*blk+tidx]=ptrinput[k*blk+tidx];
+	__shared__ float pixvalues[maxnumplanes];
+	if (!zeropad) 
+	{
+		for(k=0; k<valuesperthread; k++) {
+			pixvalues[k*blk+tidx]=ptrinput[k*blk+tidx];
+		}
 	}
-	
 
+
+	int stridej = (kH*kW - dW) * nInputPlane;
+//	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
+
+//	write to memory
 	
 	for(i=imin; i<imax+1; i++) {
 		for(j=jmin; j<jmax+1; j++) {
-			for(k=0; k<valuesperthread; k++) {
-				ptrkslices[k*blk+tidx]=pixvalues[k*blk+tidx];
+			if(zeropad) 
+			{
+				for(k=0; k<valuesperthread; k++) {
+					ptrkslices[k*blk+tidx]=0;
+				}
+			}
+			else {
+				for(k=0; k<valuesperthread; k++) {
+					ptrkslices[k*blk+tidx]=pixvalues[k*blk+tidx];
+				}
 			}
 			ptrkslices += stridej;
 		}
@@ -87,52 +117,20 @@ template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *p
 }
 
 
-template <int maxnumplanes> __global__ void copyBiasToOutputsSharedMem(float *ptrbias, float *ptroutput, int size1, int size2, int nOutputPlane, int valuesperthread)
+__global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int size1, const int size2, const int nOutputPlane)
 {
 	// each thread has a value to manage...
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-	__shared__ float biasvalues[maxnumplanes];
- 
-	int i;
-	int j;
-	int k;
-
-	// load all in shared mem
-	for(k=0; k<valuesperthread;k++) {
-		biasvalues[k*blk+tidx]=ptrbias[k*blk+tidx];
-	}
-
-	// copy to output
-	for(i=0; i<size1; i++) {
-		for(j=0; j<size2; j++) {
-			for(k=0; k<valuesperthread;k++) {
-				ptroutput[k*blk+tidx]=biasvalues[k*blk+tidx];
-			}
-			ptroutput+=nOutputPlane;
-		}
-	}
-}
-
-
-__global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, int size1, int size2, int nOutputPlane, int valuesperthread)
-{
-	// each thread has a value to manage...
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
+	//const int blk =blockDim.x;
+	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
+	const int numpix=size1*size2;
 
 	int i;
-	int j;
-	int k;
 
-	for(i=0; i<size1; i++) {
-		for(j=0; j<size2; j++) {
-			for(k=0; k<valuesperthread; k++) {
-				ptroutput[k*blk+tidx]=ptrbias[k*blk+tidx];
-			}
-			ptroutput+=nOutputPlane;
-		}
+	float val = ptrbias[tidx];
+
+	for(i=0; i<numpix; i++) {
+		ptroutput[tidx]=val;
+		ptroutput+=nOutputPlane;
 	}
 }
 
@@ -145,29 +143,33 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
   THCudaTensor *output = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "output", "torch.CudaTensor");
   THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *bias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "bias", "torch.CudaTensor");
-  THCudaTensor *kslicestest = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kslicestest", "torch.CudaTensor");
+//  THCudaTensor *kslicestest = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kslicestest", "torch.CudaTensor");
   long kW = luaT_getfieldcheckint(L, 1, "kW");
   long kH = luaT_getfieldcheckint(L, 1, "kH");
   long dW = luaT_getfieldcheckint(L, 1, "dW");
   long dH = luaT_getfieldcheckint(L, 1, "dH");
+  long padup = luaT_getfieldcheckint(L, 1, "padup");
+  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
+  long padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  long padright = luaT_getfieldcheckint(L, 1, "padright");
   long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
 
   //luaL_argcheck(L, dimension >= 0 && dimension < input->nDimension, 2, "dimension out of range");
 
-  assert(nInputPlane%32 == 0);
+  assert(nInputPlane%32 == 0 || nInputPlane==3);
   assert(nOutputPlane%32 == 0);
 
-  // unfold the input tensor 
+
   // input should be contiguous already but... well.
   input = THCudaTensor_newContiguous(input);
 
   // find the size of kernelslices
   long isize1 = input->size[0];
   long isize2 = input->size[1];
-  long size1 = (isize1 - kH) / dH + 1;
-  long size2 = (isize2 - kW) / dW + 1;
+  long size1 = (isize1 - kH + padup + paddown) / dH + 1;
+  long size2 = (isize2 - kW + padleft + padright) / dW + 1;
 
   THCudaTensor* kernelSlices = THCudaTensor_newWithSize1d(size1*size2*kW*kH*nInputPlane);
   THCudaTensor_resize2d(output, size1* size2, nOutputPlane);
@@ -177,54 +179,52 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
   float* ptrinput   = THCudaTensor_data(input);
   float* ptrbias    = THCudaTensor_data(bias);
 
+
   // cuda blocks & threads:
-  dim3 blocks (isize1, isize2);
+  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
   dim3 threads (32);
   long valuesperthread=nInputPlane/32;
 
-  
-  //kernel unfold inputs
-  if (nInputPlane >1024 || shdmem==0) {
-  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  else if (nInputPlane >512) {
-        printf("using shared memory 1024 floats\n");
-        copyPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  else if (nInputPlane >384) {
-        printf("using shared memory 512 floats\n");
-        copyPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  else if (nInputPlane >256) {
-        printf("using shared memory 384 floats\n");
-        copyPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  else if (nInputPlane >128) {
-        printf("using shared memory 256 floats\n");
-        copyPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  else {
-        printf("using shared memory 128 floats\n");
-        copyPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
-	dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread);
-  }
-  
+//  if(nInputPlane%32 == 0) {
+	  //kernel unfold inputs
+	  if (nInputPlane >1024 || shdmem==0) {
+	  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+	  else if (nInputPlane >512) {
+		//printf("using shared memory 1024 floats\n");
+		copyPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+	  else if (nInputPlane >384) {
+		//printf("using shared memory 512 floats\n");
+		copyPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+	  else if (nInputPlane >256) {
+		//printf("using shared memory 384 floats\n");
+		copyPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+	  else if (nInputPlane >128) {
+		//printf("using shared memory 256 floats\n");
+		copyPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+	  else {
+		//printf("using shared memory 128 floats\n");
+		copyPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+	  }
+//  }
 
 
-  // fill output with biases : use shared memory 48K if possible, there is only one block anyway
-  dim3 blocksbias (1);
+
+  // fill output with biases
+  dim3 blocksbias (nOutputPlane/32);
   dim3 threadsbias (32);
+  copyBiasToOutputs<<<blocksbias, threadsbias>>>(ptrbias, ptroutput, size1, size2, nOutputPlane); 
 
-  if (nOutputPlane >12256 || shdmem==0) {
-  	copyBiasToOutputs<<<blocksbias, threadsbias>>>(ptrbias, ptroutput, size1, size2, nOutputPlane, nOutputPlane/32);  }
-  else {
-        printf("using shared memory 12k floats\n");
-  	copyBiasToOutputsSharedMem<12256><<<blocksbias, threadsbias>>>(ptrbias, ptroutput, size1, size2, nOutputPlane, nOutputPlane/32);  }
 
 
   // unfold conv kernels by resizing
@@ -248,8 +248,8 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
 
   THCudaTensor_resize3d(output, size1, size2, nOutputPlane);
  
-  THCudaTensor_resizeAs(kslicestest, kernelSlices);
-  THCudaTensor_copy(kslicestest, kernelSlices);
+//  THCudaTensor_resizeAs(kslicestest, kernelSlices);
+//  THCudaTensor_copy(kslicestest, kernelSlices);
 
   // final cut:
   THCudaTensor_free(input); 
