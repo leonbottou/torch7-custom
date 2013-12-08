@@ -17,7 +17,7 @@ function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH,
    self.padup = padup or 0
    self.paddown = paddown or 0
    self.shdmem = shdmem or 1
---   self.kslicestest = torch.Tensor()
+   self.kernelSlices = torch.Tensor()
 
    self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
    self.bias = torch.Tensor(nOutputPlane)
