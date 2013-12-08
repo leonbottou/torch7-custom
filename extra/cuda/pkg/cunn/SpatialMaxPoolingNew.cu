@@ -12,6 +12,7 @@
 
 __global__ void maxPool(float *ptrinput, float *ptroutput, const int isize1, const int isize2, const int outsize1, const int outsize2, const int nOutputPlane, const int poolH, const int poolW, const int pooldH, const int pooldW, const int valuesperthread)
 {
+	// each thread does a pixel of the output
 	const int tidx = threadIdx.x;
 	const int blk  = blockDim.x;
 	const int pixi = blockIdx.x;
@@ -38,6 +39,60 @@ __global__ void maxPool(float *ptrinput, float *ptroutput, const int isize1, con
 		ptroutput[k*blk+tidx]=out;
 		ptrinput +=stridek;
 	}	
+
+}
+
+
+__global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgradinput, float *ptrgradoutput, const int isize1, const int isize2, const int outsize1, const int outsize2, const int nOutputPlane, const int poolH, const int poolW, const int pooldH, const int pooldW, const int valuesperthread)
+{
+
+	// this one is a bit tricky : we have to add up the gradient if the pooling overlaps...
+	// so each block (each thread ?) will do one pixel of the input...
+	// 1) find which outputs are related to the input
+	// 2) go
+
+	const int tidx = threadIdx.x;
+	const int blk  = blockDim.x;
+	const int pixi = blockIdx.x;
+	const int pixj = blockIdx.y;
+
+        const int imin=(pixi - (poolH - 1) + (pooldH -1))/pooldH > 0 ? (pixi - (poolH - 1) + (pooldH -1))/pooldH : 0 ;
+        const int jmin=(pixj - (poolW - 1) + (pooldW -1))/pooldW > 0 ? (pixj - (poolW - 1) + (pooldW -1))/pooldW : 0 ;
+        const int imax= pixi / pooldH < outsize1 ? pixi / pooldH : outsize1 - 1 ;
+        const int jmax= pixj / pooldW < outsize2 ? pixj / pooldW : outsize2 - 1 ;
+
+	int i,j,k;
+
+	// move pointers
+	ptrinput   += (pixi * isize2 + pixj) * nOutputPlane ;
+	ptrgradinput   += (pixi * isize2 + pixj) * nOutputPlane ;
+	ptroutput  += (imin * outsize2 + jmin) * nOutputPlane ;
+	ptrgradoutput  += (imin * outsize2 + jmin) * nOutputPlane ;
+	
+	const int stridej = nOutputPlane;
+	const int stridei = (outsize2 -jmax+jmin-1) * nOutputPlane;
+	const int stridek = (imax+imin-1 ) * outsize2 * nOutputPlane; // this one just brings the pointer back to where it was...
+
+	for(k=0; k<valuesperthread; k++) {
+		float pixvalue=ptrinput[k*blk+tidx];
+		float gradinputvalue=0;
+		for(i=imin; i<imax+1; i++) {
+			for(j=jmin; j<jmax+1; j++) {
+				float out=ptroutput[k*blk+tidx];
+				if(pixvalue==out) {
+					gradinputvalue += ptrgradoutput[k*blk+tidx];
+				}
+				ptroutput += stridej;
+				ptrgradoutput += stridej;
+			}
+			ptroutput += stridei;
+			ptrgradoutput += stridei;
+		}
+		ptrgradinput[k*blk+tidx]=gradinputvalue;
+		ptroutput += stridek;
+		ptrgradoutput += stridek;
+	}	
+	
 
 }
 
@@ -112,36 +167,35 @@ static int cunn_SpatialMaxPoolingNew_updateGradInput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
+  THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+  THCudaTensor *output = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "output", "torch.CudaTensor");
   int dW = luaT_getfieldcheckint(L, 1, "dW");
   int dH = luaT_getfieldcheckint(L, 1, "dH");
-  int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+  long poolW = luaT_getfieldcheckint(L, 1, "poolW");
+  long poolH = luaT_getfieldcheckint(L, 1, "poolH");
 
-  luaL_argcheck(L, dW == 1, 1, "dW must be 1 (this is only a limit for CudaTensors)");
-  luaL_argcheck(L, dH == 1, 1, "dH must be 1 (this is only a limit for CudaTensors)");
 
-  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
-  THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+  long isize1 = input->size[0];
+  long isize2 = input->size[1];
+  long isize3 = input->size[2];
+  assert(isize3%32 == 0);
 
-  if (input->nDimension == 3)
-  {
-    /* check dims */
-    THArgCheck(nOutputPlane == gradOutput->size[0], 1, "Number of output features is not equal to nOutputPlane");
+  long outsize1 = output->size[0];
+  long outsize2 = output->size[1];
 
-    /* gradient to input */
-    THCudaTensor *tweight = THCudaTensor_newTranspose(weight,0,1);
-    THCudaTensor_conv2Dmv(gradInput, 0.0, gradOutput, tweight, dH, dW, "fc");
-    THCudaTensor_free(tweight);
-  }
-  else 
-  {
-    /* check dims */
-    THArgCheck(nOutputPlane == gradOutput->size[1], 1, "Number of output features is not equal to nOutputPlane");
+  THCudaTensor_resizeAs(gradInput, input);
 
-    /* gradient to input */
-    THCudaTensor *tweight = THCudaTensor_newTranspose(weight,0,1);
-    THCudaTensor_conv2Dmm(gradInput, 0.0, gradOutput, tweight, dH, dW, "fc");
-    THCudaTensor_free(tweight);    
-  }
+  dim3 blocks (isize1, isize2);
+  dim3 threads (32);
+  long valuesperthread=isize3/32;
+
+  float* ptroutput  = THCudaTensor_data(output);
+  float* ptrinput   = THCudaTensor_data(input);
+  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
+  float* ptrgradinput   = THCudaTensor_data(gradInput);
+
+
+  maxPoolBackward <<<blocks,threads>>>(ptrinput, ptroutput, ptrgradinput, ptrgradoutput, isize1, isize2, outsize1, outsize2, isize3,  poolH, poolW, dH, dW, valuesperthread);
 
   return 1;
 }

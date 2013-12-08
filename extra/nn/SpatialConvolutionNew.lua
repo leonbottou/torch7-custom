@@ -59,6 +59,7 @@ end
 function SpatialConvolutionNew:updateGradInput(input, gradOutput)
    if self.gradInput then
       input.nn.SpatialConvolutionNew_updateGradInput(self, input, gradOutput)
+      self.zeroGradients = 0
       return self.gradInput
    end
 end

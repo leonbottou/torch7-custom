@@ -235,7 +235,7 @@ __global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int si
 
 
 
-__global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane)
+__global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
 {
 	// each thread does one plane
 	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
@@ -249,7 +249,12 @@ __global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const 
 		ptrgradoutput+=nOutputPlane;
 	}
 
-	ptrgradbias[tidx]=value;
+	if(add) {	
+	ptrgradbias[tidx]+=value;
+	} else {
+	ptrgradbias[tidx]=value; 
+	}
+
 }
 
 
@@ -425,22 +430,24 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 // and gradWeight actually needs it for its gradient.
 // so by the way we compute gradbias too...  
 
+  float* ptrgradbias = THCudaTensor_data(gradBias);
+  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
+  dim3 blocksgradbias (nOutputPlane/32);
+  dim3 threadsgradbias (32);
+
   THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
   if (zeroGradients == 1) { 
 	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
+	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
   } else {
 	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
+	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
   }  
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 
-  float* ptrgradbias = THCudaTensor_data(gradBias);
-  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
-  dim3 blocksgradbias (nOutputPlane/32);
-  dim3 threadsgradbias (32);
-  computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane);
 
 
 // backprop gradinput into the slices
@@ -510,37 +517,6 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 }
 
 
-
-
-__global__ void compute_gradBias1(float *gradBias, float *gradOutput, float scale,
-                                 int output_n, int output_h, int output_w)
-{
-  // each block does a plane
-  int k = blockIdx.x;
-  float *gradOutput_k = gradOutput + (k + threadIdx.y*output_n)*output_h*output_w;
-
-  // offsets
-  int i_start = threadIdx.x;
-  int i_end = output_w*output_h;
-  int i_step = blockDim.x;
-
-  int tid = threadIdx.x + threadIdx.y * blockDim.x;
-  int nthreads = blockDim.x * blockDim.y;
-
-  // sum output plane k into partial sum array
-  __shared__ float sums[512];
-  sums[tid] = 0;
-  for (int i=i_start; i<i_end; i+=i_step) {
-    sums[tid] += gradOutput_k[i];
-  }
-  __syncthreads();
-
-  // reduce
-  if (tid == 0) {
-    for (int i=0; i<nthreads; i++)
-      gradBias[k] += scale*sums[i];
-  }
-}
 
 static int cunn_SpatialConvolutionNew_accGradParameters(lua_State *L)
 {
