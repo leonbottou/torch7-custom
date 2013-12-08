@@ -19,8 +19,13 @@ function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH,
    self.shdmem = shdmem or 1
    self.kernelSlices = torch.Tensor()
 
+
    self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
    self.bias = torch.Tensor(nOutputPlane)
+
+-- zeroGradParameters will turn this to 1 and the next gradient 
+-- computation will flush the accumulated gradients
+   self.zeroGradients = 0 
    self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
    self.gradBias = torch.Tensor(nOutputPlane)
    
@@ -53,10 +58,17 @@ end
 
 function SpatialConvolutionNew:updateGradInput(input, gradOutput)
    if self.gradInput then
-      return input.nn.SpatialConvolutionNew_updateGradInput(self, input, gradOutput)
+      input.nn.SpatialConvolutionNew_updateGradInput(self, input, gradOutput)
+      return self.gradInput
    end
 end
 
+function SpatialConvolutionNew:zeroGradParameters()
+   self.zeroGradients = 1
+   -- they will be zeroed during the gradient computation
+end
+
 function SpatialConvolutionNew:accGradParameters(input, gradOutput, scale)
-   return input.nn.SpatialConvolutionNew_accGradParameters(self, input, gradOutput, scale)
+   -- return input.nn.SpatialConvolutionNew_accGradParameters(self, input, gradOutput, scale)
+   -- 
 end

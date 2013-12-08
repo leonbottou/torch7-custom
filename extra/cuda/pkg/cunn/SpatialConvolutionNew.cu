@@ -341,6 +341,7 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
   // do addmm on output
   THCudaTensor_addmm(output, 1,1, kernelSlices, kernels);
 //  THCudaTensor_free(kernelSlices); 
+  THCudaTensor_transpose(kernels, NULL, 0, 1);
 
 
   // check for errors
@@ -380,12 +381,14 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
+  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
 
   THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
 
   THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
-
+  THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
+  THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
 
 
@@ -396,11 +399,32 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 
   THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
 
-  THCudaTensor_resizeAs(gradInput, input);
+// we compute gradWeight before gradInput because 
+// we want to recycle the kernelSlices matrix
+// and gradWeight actually needs it for its gradient.
+// so by the way we compute gradbias too...  
 
-  THCudaTensor_transpose(kernels, NULL, 0, 1);
+  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
+//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
+  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
+  if (zeroGradients == 1) { 
+	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
+  } else {
+	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
+  }  
+  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
+//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
+
+
+
   THCudaTensor_addmm(kernelSlices, 0, 1, gradOutput, kernels);
-  THCudaTensor_transpose(kernels, NULL, 0, 1);
+
+
+// we resize gradOutput back to what it was...
+  THCudaTensor_resize3d(gradOutput, size1, size2, nOutputPlane);
+
+
+  THCudaTensor_resizeAs(gradInput, input);
 
   float* ptrkslices = THCudaTensor_data(kernelSlices);
   float* ptrgradinput  = THCudaTensor_data(gradInput);
