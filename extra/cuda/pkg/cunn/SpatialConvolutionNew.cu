@@ -234,6 +234,27 @@ __global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int si
 
 
 
+
+__global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane)
+{
+	// each thread does one plane
+	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
+	const int numpix=size1*size2;
+
+	float value = 0;
+	int i;
+
+	for(i=0; i<numpix; i++) {
+		value += ptrgradoutput[tidx];
+		ptrgradoutput+=nOutputPlane;
+	}
+
+	ptrgradbias[tidx]=value;
+}
+
+
+
+
 static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
@@ -415,13 +436,21 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 
+  float* ptrgradbias = THCudaTensor_data(gradBias);
+  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
+  dim3 blocksgradbias (nOutputPlane/32);
+  dim3 threadsgradbias (32);
+  computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane);
 
 
+// backprop gradinput into the slices
   THCudaTensor_addmm(kernelSlices, 0, 1, gradOutput, kernels);
 
 
 // we resize gradOutput back to what it was...
   THCudaTensor_resize3d(gradOutput, size1, size2, nOutputPlane);
+
+
 
 
   THCudaTensor_resizeAs(gradInput, input);
@@ -479,6 +508,9 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 
   return 1;
 }
+
+
+
 
 __global__ void compute_gradBias1(float *gradBias, float *gradOutput, float scale,
                                  int output_n, int output_h, int output_w)
