@@ -22,7 +22,8 @@ end
 
 function SpatialMaxPoolingNew:updateGradInput(input, gradOutput)
    if self.gradInput then
-      return input.nn.SpatialMaxPoolingNew_updateGradInput(self, input, gradOutput)
+      input.nn.SpatialMaxPoolingNew_updateGradInput(self, input, gradOutput)
+      return self.gradInput
    end
 end
 

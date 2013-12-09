@@ -25,7 +25,8 @@ __global__ void maxPool(float *ptrinput, float *ptroutput, const int isize1, con
 	ptroutput  += (pixi * outsize2 + pixj) * nOutputPlane ;
 	const int stridej = nOutputPlane;
 	const int stridei = (isize2 - poolW) * nOutputPlane;
-	const int stridek = - poolH * isize2 * nOutputPlane;
+	const int stridek = (isize1 - poolH) * isize2 * nOutputPlane;
+	float * ptrinputsave = ptrinput;
 
 	for(k=0; k<valuesperthread; k++) {
 		float out=-2e38; 
@@ -37,7 +38,7 @@ __global__ void maxPool(float *ptrinput, float *ptroutput, const int isize1, con
 			ptrinput += stridei;
 		}
 		ptroutput[k*blk+tidx]=out;
-		ptrinput +=stridek;
+		ptrinput =ptrinputsave;
 	}	
 
 }
@@ -68,6 +69,8 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 	ptrgradinput   += (pixi * isize2 + pixj) * nOutputPlane ;
 	ptroutput  += (imin * outsize2 + jmin) * nOutputPlane ;
 	ptrgradoutput  += (imin * outsize2 + jmin) * nOutputPlane ;
+	float * ptroutputsave = ptroutput;
+	float * ptrgradoutputsave = ptrgradoutput;
 	
 	const int stridej = nOutputPlane;
 	const int stridei = (outsize2 -jmax+jmin-1) * nOutputPlane;
@@ -75,12 +78,13 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 
 	for(k=0; k<valuesperthread; k++) {
 		float pixvalue=ptrinput[k*blk+tidx];
-		float gradinputvalue=0;
+//		float gradinputvalue=0;
 		for(i=imin; i<imax+1; i++) {
 			for(j=jmin; j<jmax+1; j++) {
 				float out=ptroutput[k*blk+tidx];
 				if(pixvalue==out) {
-					gradinputvalue += ptrgradoutput[k*blk+tidx];
+					ptrgradinput[k*blk+tidx] += ptrgradoutput[k*blk+tidx];
+//					gradinputvalue += ptrgradoutput[k*blk+tidx];
 				}
 				ptroutput += stridej;
 				ptrgradoutput += stridej;
@@ -88,9 +92,9 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 			ptroutput += stridei;
 			ptrgradoutput += stridei;
 		}
-		ptrgradinput[k*blk+tidx]=gradinputvalue;
-		ptroutput += stridek;
-		ptrgradoutput += stridek;
+//		ptrgradinput[k*blk+tidx]=gradinputvalue;
+		ptroutput = ptroutputsave;
+		ptrgradoutput = ptrgradoutputsave;
 	}	
 	
 
@@ -147,13 +151,13 @@ static int cunn_SpatialMaxPoolingNew_updateOutput(lua_State *L)
   // check for errors
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
-    printf("error in copyPixelsInSlices: %s\n", cudaGetErrorString(err));
+    printf("error in maxPool: %s\n", cudaGetErrorString(err));
     THError("aborting");
   }
 
 
   // final cut:
-  THCudaTensor_free(input); 
+  //THCudaTensor_free(input); 
   //THCudaTensor_select(output, NULL, dimension, 0);
 
   return 1;
@@ -196,7 +200,12 @@ static int cunn_SpatialMaxPoolingNew_updateGradInput(lua_State *L)
 
 
   maxPoolBackward <<<blocks,threads>>>(ptrinput, ptroutput, ptrgradinput, ptrgradoutput, isize1, isize2, outsize1, outsize2, isize3,  poolH, poolW, dH, dW, valuesperthread);
-
+  // check for errors
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("error in maxPoolBackward: %s\n", cudaGetErrorString(err));
+    THError("aborting");
+  }
   return 1;
 }
 

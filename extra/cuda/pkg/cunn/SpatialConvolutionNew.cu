@@ -133,16 +133,16 @@ template <int maxnumplanes> __global__ void addPixelsInSlicesSharedMem(float *pt
 		if(!zeropad) {
 			for(i=imin; i<imax+1; i++) {
 				for(j=jmin; j<jmax+1; j++) {
-						for(k=0; k<valuesperthread; k++) {
-							gradvalues[k*blk+tidx] += ptrkslices[k*blk+tidx];
-						}
-					ptrkslices += stridej;
+					for(k=0; k<valuesperthread; k++) {
+						gradvalues[k*blk+tidx] += ptrkslices[k*blk+tidx];
+					}
+				ptrkslices += stridej;
 				}
 				ptrkslices += stridei;
 			}	
-		}
-		for(k=0; k<valuesperthread; k++) {
-			ptrgradinput[k*blk+tidx] = gradvalues[k*blk+tidx];
+			for(k=0; k<valuesperthread; k++) {
+				ptrgradinput[k*blk+tidx] = gradvalues[k*blk+tidx];
+			}
 		}
 	}
 }
@@ -179,13 +179,20 @@ template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *p
 	// read pixel
 	// load the stuff in shared memory first...
 	__shared__ float pixvalues[maxnumplanes];
-	if (!zeropad) 
-	{
-		for(k=0; k<valuesperthread; k++) {
-			pixvalues[k*blk+tidx]=ptrinput[k*blk+tidx];
+	if(tidx<nInputPlane) {
+		if (zeropad) 
+		{
+			for(k=0; k<valuesperthread; k++) {
+				pixvalues[k*blk+tidx]=0;
+			}
+		}
+		else
+		{
+			for(k=0; k<valuesperthread; k++) {
+				pixvalues[k*blk+tidx]=ptrinput[k*blk+tidx];
+			}
 		}
 	}
-
 
 	int stridej = (kH*kW - dW) * nInputPlane;
 //	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
@@ -363,9 +370,10 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
   // put kernelslices in matrix mode
   THCudaTensor_resize2d(kernelSlices, size1*size2,kW*kH*nInputPlane);
 
-
+//  printf("sgemm\n");
   // do addmm on output
   THCudaTensor_addmm(output, 1,1, kernelSlices, kernels);
+//  printf("sgemm end\n");
 //  THCudaTensor_free(kernelSlices); 
   THCudaTensor_transpose(kernels, NULL, 0, 1);
 
