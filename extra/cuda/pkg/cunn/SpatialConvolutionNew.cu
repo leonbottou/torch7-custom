@@ -264,6 +264,53 @@ __global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const 
 
 }
 
+/*
+template <int by>__global__ void computeGradBias16(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
+{
+	// each thread does one plane
+	const int tid = blockDim.x*blockIdx.x + threadIdx.x;
+	const int tidx = threadIdx.x;
+	const int tidy = threadIdx.y;
+	const int numpix=size1*size2;
+	
+	__shared__ float values[by][32];
+
+	values[tidy][tidx]=0;
+
+	float value = 0;
+	int i;
+
+	for(i=0; i*tidy<numpix; i++) {
+		values[tidy][tidx] += ptrgradoutput[i*tidy*nOutputPlane+tid];
+		//ptrgradoutput+=nOutputPlane;
+	}
+
+	__syncthreads();
+	// reduction :
+
+	if (tidy == 0) {
+		float sum1=0;
+		for (i=0; i<by; i++) {
+			sum1+=values[i][tidx];
+		}
+		values[0][tidx]=sum1;
+	}
+
+	__syncthreads();
+	if (tidx == 0) {
+		float sum2=0;
+		for (i=0; i<32; i++) {
+			sum2+=values[0][i];
+		}
+		if(add) {	
+		ptrgradbias[tid]+=sum2;
+		} else {
+		ptrgradbias[tid]=sum2; 
+		}
+	}
+	
+}
+*/
 
 
 
@@ -415,16 +462,17 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
-  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
+//  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
 
-  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
+//  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
+  THCudaTensor *backwardSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "backwardSlices", "torch.CudaTensor");
 
   THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
-  THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
-  THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
+//  THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
+//  THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
-
+  
 
   long isize1 = input->size[0];
   long isize2 = input->size[1];
@@ -432,18 +480,18 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   long size2 = gradOutput->size[1];
 
   THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
-
+  THCudaTensor_resize2d(backwardSlices, size1*size2,kW*kH*nInputPlane);
 // we compute gradWeight before gradInput because 
 // we want to recycle the kernelSlices matrix
 // and gradWeight actually needs it for its gradient.
 // so by the way we compute gradbias too...  
 
-  float* ptrgradbias = THCudaTensor_data(gradBias);
-  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
-  dim3 blocksgradbias (nOutputPlane/32);
-  dim3 threadsgradbias (32);
+//  float* ptrgradbias = THCudaTensor_data(gradBias);
+//  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
+//  dim3 blocksgradbias (nOutputPlane/32);
+//  dim3 threadsgradbias (32);
 
-  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
+/*  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
   if (zeroGradients == 1) { 
@@ -456,10 +504,10 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 
-
+*/
 
 // backprop gradinput into the slices
-  THCudaTensor_addmm(kernelSlices, 0, 1, gradOutput, kernels);
+  THCudaTensor_addmm(backwardSlices, 0, 1, gradOutput, kernels);
 
 
 // we resize gradOutput back to what it was...
@@ -470,7 +518,7 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 
   THCudaTensor_resizeAs(gradInput, input);
 
-  float* ptrkslices = THCudaTensor_data(kernelSlices);
+  float* ptrbackslices = THCudaTensor_data(backwardSlices);
   float* ptrgradinput  = THCudaTensor_data(gradInput);
 
   dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
@@ -482,41 +530,41 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
   // for some reason i thought it would be cool to be able to backprop through it
 
 	  if (nInputPlane >1024 || shdmem==0) {
-	  addPixelsInSlices<<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlices<<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >512)  {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >384)  {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >256)  {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >128)  {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >32)  {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else {
 		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <32> <<<blocks, threads>>>(ptrgradinput, ptrkslices,
+	  addPixelsInSlicesSharedMem <32> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 
-
+//  THCudaTensor_copy(kslicestest, kernelSlices);
 
 
 
@@ -528,57 +576,70 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 
 static int cunn_SpatialConvolutionNew_accGradParameters(lua_State *L)
 {
-  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
+//  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
-  int dW = luaT_getfieldcheckint(L, 1, "dW");
-  int dH = luaT_getfieldcheckint(L, 1, "dH");
-  int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  float scale = luaL_optnumber(L, 4, 1);
+  long kW = luaT_getfieldcheckint(L, 1, "kW");
+  long kH = luaT_getfieldcheckint(L, 1, "kH");
+//  long dW = luaT_getfieldcheckint(L, 1, "dW");
+//  long dH = luaT_getfieldcheckint(L, 1, "dH");
+//  long padup = luaT_getfieldcheckint(L, 1, "padup");
+//  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
+//  long padleft = luaT_getfieldcheckint(L, 1, "padleft");
+//  long padright = luaT_getfieldcheckint(L, 1, "padright");
+//  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
+  long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+  long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
+  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
 
-  luaL_argcheck(L, dW == 1, 1, "dW must be 1 (this will be fixed soon)");
-  luaL_argcheck(L, dH == 1, 1, "dH must be 1 (this will be fixed soon)");
+  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
 
+//  THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
   THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
-  float *gradBias_data = THCudaTensor_data(gradBias);
-  float *gradOutput_data = THCudaTensor_data(gradOutput);
+//  printf("accgradparameters");
 
-  if (input->nDimension == 3)
-  {
-    /* check dims */
-    THArgCheck(nOutputPlane == gradOutput->size[0], 1, "Number of output features is not equal to nOutputPlane");
+//  long isize1 = input->size[0];
+//  long isize2 = input->size[1];
+  long size1 = gradOutput->size[0];
+  long size2 = gradOutput->size[1];
 
-    /* gradient to bias */
-    dim3 blocks(nOutputPlane);
-    dim3 threads(32);
-    compute_gradBias <<<blocks, threads>>> (gradBias_data, gradOutput_data, scale,
-                                            gradOutput->size[0], gradOutput->size[1], gradOutput->size[2]);
+  THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
 
-    /* gradient to kernels */
-    THCudaTensor_conv2DRevger(gradWeight, 1.0, scale, input, gradOutput, dH, dW);
-  }
-  else
-  {
-    /* check dims */
-    THArgCheck(nOutputPlane == gradOutput->size[1], 1, "Number of output features is not equal to nOutputPlane");
+  float* ptrgradbias = THCudaTensor_data(gradBias);
+  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
+  dim3 blocksgradbias (nOutputPlane/32);
+  dim3 threadsgradbias (32);
 
-    /* gradient to bias */
-    dim3 blocks(nOutputPlane);
-    long sl;
-    for (sl=0; sl<gradOutput->size[0]; sl+=16) {
-      int cst = 16;
-      if ((cst+sl) > gradOutput->size[0]) cst = gradOutput->size[0] - sl;
-      dim3 threads(16, cst);
-      compute_gradBias <<<blocks, threads>>> (gradBias_data, gradOutput_data + sl*gradOutput->stride[0], scale,
-                                              gradOutput->size[1], gradOutput->size[2], gradOutput->size[3]);
-    }
+  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
+//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
+  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 
-    /* gradient to kernels */
-    THCudaTensor_conv2DRevgerm(gradWeight, 1.0, scale, input, gradOutput, dH, dW);
-  }
+/*long gwsize1 = gradWeight->size[0];
+long gwsize2 = gradWeight->size[1];
 
-  return 0;
+long kslsize1 = kernelSlices->size[0];
+long kslsize2 = kernelSlices->size[1];
+
+printf("gwsize : %d, %d \n", gwsize1, gwsize2);
+printf("kslsize : %d, %d \n", kslsize1, kslsize2);
+printf("goutsize : %d, %d \n", size1, size2);*/
+
+  if (zeroGradients == 1) { 
+	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
+	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
+  } else {
+	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
+	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
+  }  
+  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
+//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
+
+// we resize gradOutput back to what it was...
+  THCudaTensor_resize3d(gradOutput, size1, size2, nOutputPlane);
+
+return 1;
+
 }
 
 static const struct luaL_Reg cunn_SpatialConvolutionNew__ [] = {

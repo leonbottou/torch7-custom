@@ -31,6 +31,7 @@
 
 // local changes
 #include "CrossMapNormalization.cu"
+#include "CrossMapNormalizationNew.cu"
 #include "SpatialConvolutionNew.cu"
 #include "SpatialMaxPoolingNew.cu"
 
@@ -64,6 +65,7 @@ int luaopen_libcunn(lua_State *L)
 
   // local changes
   cunn_CrossMapNormalization_init(L);
+  cunn_CrossMapNormalizationNew_init(L);
   cunn_SpatialConvolutionNew_init(L);
   cunn_SpatialMaxPoolingNew_init(L);
 

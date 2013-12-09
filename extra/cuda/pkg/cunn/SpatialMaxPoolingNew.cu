@@ -25,7 +25,7 @@ __global__ void maxPool(float *ptrinput, float *ptroutput, const int isize1, con
 	ptroutput  += (pixi * outsize2 + pixj) * nOutputPlane ;
 	const int stridej = nOutputPlane;
 	const int stridei = (isize2 - poolW) * nOutputPlane;
-	const int stridek = (isize1 - poolH) * isize2 * nOutputPlane;
+//	const int stridek = (isize1 - poolH) * isize2 * nOutputPlane;
 	float * ptrinputsave = ptrinput;
 
 	for(k=0; k<valuesperthread; k++) {
@@ -74,7 +74,7 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 	
 	const int stridej = nOutputPlane;
 	const int stridei = (outsize2 -jmax+jmin-1) * nOutputPlane;
-	const int stridek = (imax+imin-1 ) * outsize2 * nOutputPlane; // this one just brings the pointer back to where it was...
+//	const int stridek = (imax+imin-1 ) * outsize2 * nOutputPlane; // this one just brings the pointer back to where it was...
 
 	for(k=0; k<valuesperthread; k++) {
 		float pixvalue=ptrinput[k*blk+tidx];

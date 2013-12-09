@@ -79,6 +79,7 @@ include('SpatialSubtractiveNormalization.lua')
 include('SpatialDivisiveNormalization.lua')
 include('SpatialContrastiveNormalization.lua')
 include('CrossMapNormalization.lua')
+include('CrossMapNormalizationNew.lua')
 include('SpatialZeroPadding.lua')
 
 include('VolumetricConvolution.lua')

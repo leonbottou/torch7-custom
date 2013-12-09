@@ -18,6 +18,7 @@ function SpatialConvolutionNew:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH,
    self.paddown = paddown or 0
    self.shdmem = shdmem or 1
    self.kernelSlices = torch.Tensor()
+   self.backwardSlices = torch.Tensor()
 
 
    self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
@@ -59,7 +60,6 @@ end
 function SpatialConvolutionNew:updateGradInput(input, gradOutput)
    if self.gradInput then
       input.nn.SpatialConvolutionNew_updateGradInput(self, input, gradOutput)
-      self.zeroGradients = 0
       return self.gradInput
    end
 end
@@ -70,6 +70,7 @@ function SpatialConvolutionNew:zeroGradParameters()
 end
 
 function SpatialConvolutionNew:accGradParameters(input, gradOutput, scale)
-   -- return input.nn.SpatialConvolutionNew_accGradParameters(self, input, gradOutput, scale)
-   -- 
+    input.nn.SpatialConvolutionNew_accGradParameters(self, input, gradOutput, scale) 
+    self.zeroGradients = 0
+--    return 
 end
