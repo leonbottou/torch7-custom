@@ -78,13 +78,13 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 
 	for(k=0; k<valuesperthread; k++) {
 		float pixvalue=ptrinput[k*blk+tidx];
-//		float gradinputvalue=0;
+		float gradinputvalue=0;
 		for(i=imin; i<imax+1; i++) {
 			for(j=jmin; j<jmax+1; j++) {
 				float out=ptroutput[k*blk+tidx];
 				if(pixvalue==out) {
-					ptrgradinput[k*blk+tidx] += ptrgradoutput[k*blk+tidx];
-//					gradinputvalue += ptrgradoutput[k*blk+tidx];
+//					ptrgradinput[k*blk+tidx] += ptrgradoutput[k*blk+tidx];
+					gradinputvalue += ptrgradoutput[k*blk+tidx];
 				}
 				ptroutput += stridej;
 				ptrgradoutput += stridej;
@@ -92,7 +92,7 @@ __global__ void maxPoolBackward(float *ptrinput, float *ptroutput, float *ptrgra
 			ptroutput += stridei;
 			ptrgradoutput += stridei;
 		}
-//		ptrgradinput[k*blk+tidx]=gradinputvalue;
+		ptrgradinput[k*blk+tidx]=gradinputvalue;
 		ptroutput = ptroutputsave;
 		ptrgradoutput = ptrgradoutputsave;
 	}	

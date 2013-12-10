@@ -49,7 +49,7 @@ template <int maxnumplanes> __global__ void CrossMapNormalizationNew_output(floa
          for(j=startf; j<endf; j++)
            {
 		if(j>-1 && j<nPlanes)
-                tmpz += pixvalues[j];
+                tmpz += pixvalues[j]*pixvalues[j];
            }
 	tmpz=pow(k+tmpz*alphan,-beta);
 	z[i*blk + tidx]=tmpz;
