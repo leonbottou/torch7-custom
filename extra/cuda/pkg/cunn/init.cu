@@ -68,6 +68,7 @@ int luaopen_libcunn(lua_State *L)
   cunn_CrossMapNormalizationNew_init(L);
   cunn_SpatialConvolutionNew_init(L);
   cunn_SpatialMaxPoolingNew_init(L);
+  cunn_SpatialGlobalMaxPoolingNew_init(L);
 
   return 1;
 }
