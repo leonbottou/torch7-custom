@@ -23,7 +23,7 @@ __global__ void globalMaxPool(float *ptrinput, float *ptroutput, float *ptrindic
 	// nPlanes better be a multiple of 32 for coalesced reads
 
 	if (tidx<nPlanes) {
-		for(i=0; i<isize1*isize2; k++) {
+		for(i=0; i<isize1*isize2; i++) {
 			float in = ptrinput[i*nPlanes+tidx];
 			if (in>out) {
 				out=in;
@@ -46,7 +46,7 @@ __global__ void globalMaxPoolBackward(float *ptrgradinput, float *ptrgradoutput,
 	const int tidx = threadIdx.x;
 	const int blk  = blockDim.x;
 	const int pixidx = gridDim.x * blockIdx.y + blockIdx.x;
-	const int valuesperthread = (blk + nPlanes - 1) / nPlanes;
+	const int valuesperthread = (nPlanes + blk - 1) / blk;
 
 	int k;
 
@@ -85,7 +85,9 @@ static int cunn_SpatialGlobalMaxPoolingNew_updateOutput(lua_State *L)
   long nPlanes = input->size[2];
 //  assert(nPlanes%32 == 0);
 
-  THCudaTensor_resize3d(output, 1, 1, isize3);
+  THCudaTensor_resize3d(output, 1, 1, nPlanes);
+  THCudaTensor_resizeAs(indices, output);
+  
 
   float* ptroutput  = THCudaTensor_data(output);
   float* ptrinput   = THCudaTensor_data(input);
@@ -96,7 +98,7 @@ static int cunn_SpatialGlobalMaxPoolingNew_updateOutput(lua_State *L)
   dim3 blocks ((nPlanes + 31) / 32);
   dim3 threads (32);
 
-  globalMaxPool <<<blocks, threads>>> (ptrinput, ptroutput, ptrindices, isize1, isize2, nPlanes)
+  globalMaxPool <<<blocks, threads>>> (ptrinput, ptroutput, ptrindices, isize1, isize2, nPlanes);
 
 
 
@@ -121,6 +123,7 @@ static int cunn_SpatialGlobalMaxPoolingNew_updateOutput(lua_State *L)
 
 static int cunn_SpatialGlobalMaxPoolingNew_updateGradInput(lua_State *L)
 {
+  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
   THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
   THCudaTensor *indices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "indices", "torch.CudaTensor");
@@ -146,7 +149,7 @@ static int cunn_SpatialGlobalMaxPoolingNew_updateGradInput(lua_State *L)
   float* ptrgradinput   = THCudaTensor_data(gradInput);
 
 
-  globalMaxPoolBackward <<<blocks, threads>>> (ptrinput, ptroutput, ptrindices, isize1, isize2, nPlanes)
+  globalMaxPoolBackward <<<blocks, threads>>> (ptrgradinput, ptrgradoutput, ptrindices, isize1, isize2, nPlanes);
   // check for errors
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {

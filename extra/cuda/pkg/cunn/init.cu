@@ -34,6 +34,7 @@
 #include "CrossMapNormalizationNew.cu"
 #include "SpatialConvolutionNew.cu"
 #include "SpatialMaxPoolingNew.cu"
+#include "SpatialGlobalMaxPoolingNew.cu"
 
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunn(lua_State *L);
