@@ -148,6 +148,56 @@ template <int maxnumplanes> __global__ void addPixelsInSlicesSharedMem(float *pt
 }
 
 
+
+template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput, float *ptrkslices,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
+{
+	const int pixi=blockIdx.x;
+	const int pixj=blockIdx.y;
+	const int blk =blockDim.x;
+	const int tidx=threadIdx.x;
+
+        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+
+	int i;
+	int j;
+	int k;
+
+	float gradvalues[maxnumplanes/32];
+		for(k=0; k<valuesperthread; k++) {
+			gradvalues[k]=0;
+		}
+
+	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+	
+	ptrgradinput += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	ptrkslices   += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+
+	int stridej = (kH*kW - dW) * nInputPlane;
+	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+
+	if(tidx<nInputPlane) {
+		if(!zeropad) {
+			for(i=imin; i<imax+1; i++) {
+				for(j=jmin; j<jmax+1; j++) {
+					for(k=0; k<valuesperthread; k++) {
+						gradvalues[k] += ptrkslices[k*blk+tidx];
+					}
+				ptrkslices += stridej;
+				}
+				ptrkslices += stridei;
+			}	
+			for(k=0; k<valuesperthread; k++) {
+				ptrgradinput[k*blk+tidx] = gradvalues[k];
+			}
+		}
+	}
+}
+
+
 template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *ptrinput, float *ptrkslices,
 	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
 {
@@ -221,20 +271,150 @@ template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *p
 }
 
 
+template <int maxnumplanes> __global__ void copyPixelsInSlicesReg(float *ptrinput, float *ptrkslices,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
+{
+	// each block does one pixel of the input image
+	// each kernel slice is represented by its upper-left coordinates
+
+	const int pixi=blockIdx.x;
+	const int pixj=blockIdx.y;
+	const int blk =blockDim.x;
+	const int tidx=threadIdx.x;
+
+	int i,j,k;
+
+	// step 1 : find which kernel slices contain the values of the pixel
+        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+
+	// step 2 : move the pointers
+	// this one goes to where the pixel is at
+	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	// this one goes to the first pixel of the first kernel slice
+	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+
+	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+	// read pixel
+	// load the stuff in shared memory first...
+	float pixvalues[maxnumplanes/32];
+	if(tidx<nInputPlane) {
+		if (zeropad) 
+		{
+			for(k=0; k<valuesperthread; k++) {
+				pixvalues[k]=0;
+			}
+		}
+		else
+		{
+			for(k=0; k<valuesperthread; k++) {
+				pixvalues[k]=ptrinput[k*blk+tidx];
+			}
+		}
+	}
+
+	int stridej = (kH*kW - dW) * nInputPlane;
+//	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
+
+//	write to memory
+	if(tidx<nInputPlane) {
+		for(i=imin; i<imax+1; i++) {
+			for(j=jmin; j<jmax+1; j++) {
+				if(zeropad) 
+				{
+					for(k=0; k<valuesperthread; k++) {
+						ptrkslices[k*blk+tidx]=0;
+					}
+				}
+				else {
+					for(k=0; k<valuesperthread; k++) {
+						ptrkslices[k*blk+tidx]=pixvalues[k];
+					}
+				}
+				ptrkslices += stridej;
+			}
+			ptrkslices += stridei;
+		}	
+	}
+}
+
+
+__global__ void copyPixelsInSlicesRGB(float *ptrinput, float *ptrkslices,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown)
+{
+	// each block does one pixel of the input image
+	// each kernel slice is represented by its upper-left coordinates
+
+	const int pixi=blockIdx.x;
+	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
+	const int tidx=threadIdx.x;
+
+	int i,j;
+
+	if(pixj > isize2 + padleft + padright -1) return;
+
+	// step 1 : find which kernel slices contain the values of the pixel
+        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+
+	// step 2 : move the pointers
+	// this one goes to where the pixel is at
+	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	// this one goes to the first pixel of the first kernel slice
+	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+
+	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+	// read pixel
+	// load the stuff first...
+	float pixvalue;
+	if (zeropad) 
+	{
+		pixvalue=0;
+	}
+	else
+	{
+		pixvalue=ptrinput[tidx];
+	}
+
+	int stridej = (kH*kW - dW) * nInputPlane;
+	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
+
+//	write to memory
+	for(i=imin; i<imax+1; i++) {
+		for(j=jmin; j<jmax+1; j++) {
+			if(zeropad) 
+			{
+				ptrkslices[tidx]=0;
+			}
+			else {
+				ptrkslices[tidx]=pixvalue;
+			}
+			ptrkslices += stridej;
+		}
+		ptrkslices += stridei;
+	}	
+}
+
+
 __global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int size1, const int size2, const int nOutputPlane)
 {
 	// each thread has a value to manage...
 	//const int blk =blockDim.x;
 	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
-	const int numpix=size1*size2;
+	const int tidy=blockIdx.y;
 
 	int i;
 
 	float val = ptrbias[tidx];
+	ptroutput+= tidy*size1*nOutputPlane;
 
-	for(i=0; i<numpix; i++) {
-		ptroutput[tidx]=val;
-		ptroutput+=nOutputPlane;
+	for(i=0; i<size1; i++) {
+		ptroutput[i*nOutputPlane+tidx]=val;
 	}
 }
 
@@ -264,8 +444,8 @@ __global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const 
 
 }
 
-/*
-template <int by>__global__ void computeGradBias16(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
+
+__global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
 {
 	// each thread does one plane
 	const int tid = blockDim.x*blockIdx.x + threadIdx.x;
@@ -273,44 +453,29 @@ template <int by>__global__ void computeGradBias16(float *ptrgradbias, float *pt
 	const int tidy = threadIdx.y;
 	const int numpix=size1*size2;
 	
-	__shared__ float values[by][32];
-
-	values[tidy][tidx]=0;
+	__shared__ float values[32][32];
 
 	float value = 0;
 	int i;
 
-	for(i=0; i*tidy<numpix; i++) {
-		values[tidy][tidx] += ptrgradoutput[i*tidy*nOutputPlane+tid];
+	for(i=0; i+tidy<numpix; i+=blockDim.y) {
+		value += ptrgradoutput[(i+tidy)*nOutputPlane+tid];
 		//ptrgradoutput+=nOutputPlane;
 	}
 
+	values[tidy][tidx]=value;
 	__syncthreads();
 	// reduction :
 
 	if (tidy == 0) {
-		float sum1=0;
-		for (i=0; i<by; i++) {
-			sum1+=values[i][tidx];
-		}
-		values[0][tidx]=sum1;
-	}
+		float gradbiasvalue=0;
+		#pragma unroll
+		for(i=0; i<32;i++){ gradbiasvalue+=values[i][tidx]; }
 
-	__syncthreads();
-	if (tidx == 0) {
-		float sum2=0;
-		for (i=0; i<32; i++) {
-			sum2+=values[0][i];
-		}
-		if(add) {	
-		ptrgradbias[tid]+=sum2;
-		} else {
-		ptrgradbias[tid]=sum2; 
-		}
+		ptrgradbias[tid]=gradbiasvalue;
 	}
 	
 }
-*/
 
 
 
@@ -364,39 +529,40 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
   long valuesperthread=nInputPlane/32;
   if(valuesperthread==0) { valuesperthread=1; } 
 
+	  //with an upper bound on the number of planes, we can be more efficient
 	  //kernel unfold inputs
 	  if (nInputPlane >1024 || shdmem==0) {
 	  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >512) {
-		//printf("using shared memory 1024 floats\n");
-		copyPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >384) {
-		//printf("using shared memory 512 floats\n");
-		copyPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >256) {
-		//printf("using shared memory 384 floats\n");
-		copyPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >128) {
-		//printf("using shared memory 256 floats\n");
-		copyPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >32) {
-		//printf("using shared memory 256 floats\n");
-		copyPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
+	  else if (nInputPlane ==3) {
+		  dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10);
+		  dim3 threadsRGB (3,10);
+		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown);
+	  }
 	  else {
-		//printf("using shared memory 128 floats\n");
-		copyPixelsInSlicesSharedMem <32> <<<blocks, threads>>>(ptrinput, ptrkslices,
+		copyPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 1, padleft, padright, padup, paddown);
 	  }
 
@@ -405,7 +571,7 @@ static int cunn_SpatialConvolutionNew_updateOutput(lua_State *L)
 
 
   // fill output with biases
-  dim3 blocksbias (nOutputPlane/32);
+  dim3 blocksbias (nOutputPlane/32, size2);
   dim3 threadsbias (32);
   copyBiasToOutputs<<<blocksbias, threadsbias>>>(ptrbias, ptroutput, size1, size2, nOutputPlane); 
 
@@ -481,30 +647,6 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 
   THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
   THCudaTensor_resize2d(backwardSlices, size1*size2,kW*kH*nInputPlane);
-// we compute gradWeight before gradInput because 
-// we want to recycle the kernelSlices matrix
-// and gradWeight actually needs it for its gradient.
-// so by the way we compute gradbias too...  
-
-//  float* ptrgradbias = THCudaTensor_data(gradBias);
-//  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
-//  dim3 blocksgradbias (nOutputPlane/32);
-//  dim3 threadsgradbias (32);
-
-/*  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
-//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
-  if (zeroGradients == 1) { 
-	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
-	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
-  } else {
-	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
-	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
-  }  
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
-//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
-
-*/
 
 // backprop gradinput into the slices
   THCudaTensor_addmm(backwardSlices, 0, 1, gradOutput, kernels);
@@ -534,33 +676,27 @@ static int cunn_SpatialConvolutionNew_updateGradInput(lua_State *L)
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
 	  else if (nInputPlane >512)  {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <1024> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >384)  {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <512> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >256)  {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <384> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >128)  {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <256> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else if (nInputPlane >32)  {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <128> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 	  else {
-		//printf("using shared memory 1024 floats\n");
-	  addPixelsInSlicesSharedMem <32> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+	  addPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  } 
 
@@ -609,7 +745,7 @@ static int cunn_SpatialConvolutionNew_accGradParameters(lua_State *L)
   float* ptrgradbias = THCudaTensor_data(gradBias);
   float* ptrgradoutput  = THCudaTensor_data(gradOutput);
   dim3 blocksgradbias (nOutputPlane/32);
-  dim3 threadsgradbias (32);
+  dim3 threadsgradbias (32,32);
 
   THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
@@ -627,10 +763,10 @@ printf("goutsize : %d, %d \n", size1, size2);*/
 
   if (zeroGradients == 1) { 
 	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
-	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
+	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
   } else {
 	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
-	computeGradBias <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
+	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
   }  
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
