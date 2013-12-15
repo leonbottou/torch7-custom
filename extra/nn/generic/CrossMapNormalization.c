@@ -49,7 +49,7 @@ static int nn_(CrossMapNormalization_updateGradInput)(lua_State *L)
   real k = luaT_getfieldchecknumber(L, 1, "k");
   long n = luaT_getfieldcheckint(L, 1, "n");
   real alphan = alpha / n;
-  long i, j, m;
+  long i, j;
   real *zi0, *zi1;
 
   luaL_argcheck(L, dimension >= 0 && dimension < input->nDimension, 2, "dimension out of range");
