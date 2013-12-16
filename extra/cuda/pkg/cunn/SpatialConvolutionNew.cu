@@ -6,6 +6,44 @@
     };
 #endif
 
+/*
+
+This file contains 4 kernels :
+- copyPixelsInSlices and its more optimized version copyPixelsInSlicesReg (when there is an upper bound on the number of planes).
+- addPixelsInSlices and its optimized version addPixelsInSlicesReg.
+
+The primary kernel is copyPixelsInSlices : it unfolds a 3D matrix into a 2D matrix in a way that the 2D convolution (with many kernels) becomes a matrix multiplication.
+We call the resulting matrix "kernelSlices". Each row corresponds to a kW*kH*nInputPlane array.
+
+Steps :
+1) choose a pixel (pixi = blockIdx.x, pixj = blockIdx.y)
+2) find which slices (coordinates (imin-imax, jmin-jmax)) will contain the pixel information
+3) loop : copy the pixel information, jump to next slice (and position) by 
+		moving the kernelSlices pointer ptrkslices by stridej = (kH*kW - dW) * nInputPlane
+
+	detailed example : pixel (4,4), kernels of size 5*5, stride dW=1 :
+	- 1st slice  : top-left coordinates : (imin,jmin)  . Pixel is in coordinates (4,4, position 25) of the slice.
+	- 2nd slice  : top-left coordinates : (imin,jmin+1). Pixel is in coordinates (4,3, position 24) of the slice.
+	- 3rd slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,2, position 23) of the slice.
+	- 4th slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,1, position 22) of the slice.
+	- 5th slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,0, position 21) of the slice.
+	- when jmax-jmin slices have been filled, we jump to the next series of slices by 
+		moving ptrkslices by stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane
+	- 1st slice  : top-left coordinates : (imin+1,jmin)  . Pixel is in coordinates (3,4, position 20) of the slice.
+	- 2nd slice  : top-left coordinates : (imin+1,jmin+1). Pixel is in coordinates (3,3, position 19) of the slice.
+	- 3rd slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,2, position 18) of the slice.
+	- 4th slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,1, position 17) of the slice.
+	- 5th slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,0, position 16) of the slice.
+	- ...
+
+In case the pixel (pixi,pixj) is in the zero-padding, we fill the slice with zeros.
+
+addPixelsInSlices is the same, except we read the contents of the array instead of writing.
+
+the *Reg versions just consist in preloading the pixel information before writing it.
+
+
+*/
 
 __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
@@ -99,54 +137,6 @@ __global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
 }
 
 
-template <int maxnumplanes> __global__ void addPixelsInSlicesSharedMem(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
-{
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	int i;
-	int j;
-	int k;
-
-	__shared__ float gradvalues[maxnumplanes];
-		for(k=0; k<valuesperthread; k++) {
-			gradvalues[k*blk+tidx]=0;
-		}
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrgradinput += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices   += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-
-	if(tidx<nInputPlane) {
-		if(!zeropad) {
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
-					for(k=0; k<valuesperthread; k++) {
-						gradvalues[k*blk+tidx] += ptrkslices[k*blk+tidx];
-					}
-				ptrkslices += stridej;
-				}
-				ptrkslices += stridei;
-			}	
-			for(k=0; k<valuesperthread; k++) {
-				ptrgradinput[k*blk+tidx] = gradvalues[k*blk+tidx];
-			}
-		}
-	}
-}
-
 
 
 template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput, float *ptrkslices,
@@ -194,79 +184,6 @@ template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradi
 				ptrgradinput[k*blk+tidx] = gradvalues[k];
 			}
 		}
-	}
-}
-
-
-template <int maxnumplanes> __global__ void copyPixelsInSlicesSharedMem(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
-{
-	// each block does one pixel of the input image
-	// each kernel slice is represented by its upper-left coordinates
-
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-	int i,j,k;
-
-
-
-	// step 1 : find which kernel slices contain the values of the pixel
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	// step 2 : move the pointers
-	// this one goes to where the pixel is at
-	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	// this one goes to the first pixel of the first kernel slice
-	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	// read pixel
-	// load the stuff in shared memory first...
-	__shared__ float pixvalues[maxnumplanes];
-	if(tidx<nInputPlane) {
-		if (zeropad) 
-		{
-			for(k=0; k<valuesperthread; k++) {
-				pixvalues[k*blk+tidx]=0;
-			}
-		}
-		else
-		{
-			for(k=0; k<valuesperthread; k++) {
-				pixvalues[k*blk+tidx]=ptrinput[k*blk+tidx];
-			}
-		}
-	}
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-//	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
-
-//	write to memory
-	if(tidx<nInputPlane) {
-		for(i=imin; i<imax+1; i++) {
-			for(j=jmin; j<jmax+1; j++) {
-				if(zeropad) 
-				{
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=0;
-					}
-				}
-				else {
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=pixvalues[k*blk+tidx];
-					}
-				}
-				ptrkslices += stridej;
-			}
-			ptrkslices += stridei;
-		}	
 	}
 }
 
@@ -365,19 +282,16 @@ __global__ void copyPixelsInSlicesRGB(float *ptrinput, float *ptrkslices,
 	// step 2 : move the pointers
 	// this one goes to where the pixel is at
 	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	// this one goes to the first pixel of the first kernel slice
 	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
 	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
 	// read pixel
 	// load the stuff first...
 	float pixvalue;
-	if (zeropad) 
-	{
+	if (zeropad) 	{
 		pixvalue=0;
 	}
-	else
-	{
+	else	{
 		pixvalue=ptrinput[tidx];
 	}
 
@@ -420,34 +334,8 @@ __global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int si
 
 
 
-
-
-__global__ void computeGradBias(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
-{
-	// each thread does one plane
-	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
-	const int numpix=size1*size2;
-
-	float value = 0;
-	int i;
-
-	for(i=0; i<numpix; i++) {
-		value += ptrgradoutput[tidx];
-		ptrgradoutput+=nOutputPlane;
-	}
-
-	if(add) {	
-	ptrgradbias[tidx]+=value;
-	} else {
-	ptrgradbias[tidx]=value; 
-	}
-
-}
-
-
 __global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
 {
-	// each thread does one plane
 	const int tid = blockDim.x*blockIdx.x + threadIdx.x;
 	const int tidx = threadIdx.x;
 	const int tidy = threadIdx.y;
@@ -460,7 +348,6 @@ __global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, cons
 
 	for(i=0; i+tidy<numpix; i+=blockDim.y) {
 		value += ptrgradoutput[(i+tidy)*nOutputPlane+tid];
-		//ptrgradoutput+=nOutputPlane;
 	}
 
 	values[tidy][tidx]=value;
