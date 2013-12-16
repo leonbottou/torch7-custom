@@ -5,61 +5,57 @@
 static int nn_(ImnetAggregate_updateOutput)(lua_State *L)
 {
   THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
-/*  long length = luaT_getfieldcheckint(L, 1, "length");*/
   long numClasses = luaT_getfieldcheckint(L, 1, "numclasses");
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
   THTensor *agg = luaT_getfieldcheckudata(L, 1, "aggtensor", torch_Tensor);
   THTensor *chosen = luaT_getfieldcheckudata(L, 1, "chosentensor", torch_Tensor);
+  real *aggArray = THTensor_(data)(agg);
+  real *chosenParent = THTensor_(data)(chosen);
+  real *inputs=THTensor_(data)(input);
+  real *outputs;
+  long iter=0;
+  long k, cls, numparents, maxparent;
+  real outvalue, parentval;
+  long parents[3];
+  real parentvalues[3];
 
   THTensor_(resizeAs)(output, input);
-
-  real * aggArray = THTensor_(data)(agg);
-  real * chosenParent = THTensor_(data)(chosen);
-  real * inputs=THTensor_(data)(input);
-  real * outputs=THTensor_(data)(output);
-
- 
- 
-		long iter=0;
-		long k, cls, numparents, maxparent;
-		real outvalue, parentval;
-		long parents[3];
-		real parentvalues[3];
-
-		for (cls=0;cls<numClasses;cls++)
-		{
-			numparents=aggArray[iter];
-			iter++;
-			outvalue=inputs[cls];
-			maxparent=-1;
-			if (numparents>0) {
-				/*/ get score values from parents + indices*/
-				for (k=0;k<numparents;k++)
-				{
-					parents[k]=aggArray[iter+k];
-					parentvalues[k]=inputs[parents[k]];
-				}
-
-				/*/ find the max one*/
-				maxparent=parents[0];
-				parentval=parentvalues[0];
-				for (k=1;k<numparents;k++)
-				{
-					if (parentvalues[k] > parentval)
-					{
-						parentval=parentvalues[k];
-						maxparent=parents[k];
-					/*	printf("%d\n",cls);
-						printf("%d\n",parents[k]);*/
-					}
-				}
-				outvalue+=parentval;
-			}
-			chosenParent[cls]=maxparent;
-			outputs[cls]=outvalue;
-			iter=iter+numparents;
+  outputs=THTensor_(data)(output);
+  
+  for (cls=0;cls<numClasses;cls++)
+    {
+      numparents=aggArray[iter];
+      iter++;
+      outvalue=inputs[cls];
+      maxparent=-1;
+      if (numparents>0) {
+        /*/ get score values from parents + indices*/
+        for (k=0;k<numparents;k++)
+          {
+            parents[k]=aggArray[iter+k];
+            parentvalues[k]=inputs[parents[k]];
+          }
+        
+        /*/ find the max one*/
+        maxparent=parents[0];
+        parentval=parentvalues[0];
+        for (k=1;k<numparents;k++)
+          {
+            if (parentvalues[k] > parentval)
+              {
+                parentval=parentvalues[k];
+                maxparent=parents[k];
+                /*	printf("%d\n",cls);
+                        printf("%d\n",parents[k]);*/
+              }
+          }
+        outvalue+=parentval;
+      }
+      chosenParent[cls]=maxparent;
+      outputs[cls]=outvalue;
+      iter=iter+numparents;
 		
-		}
+    }
   
 
 
@@ -72,21 +68,21 @@ static int nn_(ImnetAggregate_updateGradInput)(lua_State *L)
   THTensor *chosen = luaT_getfieldcheckudata(L, 1, "chosentensor", torch_Tensor);
   THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
   THTensor *gradInput  = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
+  real *chosenParent = THTensor_(data)(chosen);
+  real *gradInputs = THTensor_(data)(gradInput);
+  real *gradOutputs;
+  long k, parent;
 
   THTensor_(resizeAs)(gradInput, gradOutput);
   THTensor_(copy)(gradInput, gradOutput);
-  real * chosenParent = THTensor_(data)(chosen);
-  real * gradOutputs = THTensor_(data)(gradOutput);
-  real * gradInputs = THTensor_(data)(gradInput);
+  gradOutputs = THTensor_(data)(gradOutput);
 
-		long k, parent;
-
-		for (k=numClasses-1; k>=0; k--) {
-			parent=chosenParent[k];
-			if (parent>-1) {
-				gradInputs[parent] += gradOutputs[k];
-			}
-		}
+  for (k=numClasses-1; k>=0; k--) {
+    parent=chosenParent[k];
+    if (parent>-1) {
+      gradInputs[parent] += gradOutputs[k];
+    }
+  }
 
   return 1;
 }

@@ -165,7 +165,7 @@ int luaopen_libnn(lua_State *L)
   nn_FloatReLU_init(L);
   nn_FloatImnetAggregate_init(L);
   nn_FloatSpatialConvolutionNew_init(L);
-//  nn_FloatSpatialMaxPoolingNew_init(L);
+  /*  nn_FloatSpatialMaxPoolingNew_init(L); */
 
   nn_DoubleMin_init(L);
   nn_DoubleMax_init(L);
@@ -205,7 +205,7 @@ int luaopen_libnn(lua_State *L)
   nn_DoubleReLU_init(L);
   nn_DoubleImnetAggregate_init(L);
   nn_DoubleSpatialConvolutionNew_init(L);
-//  nn_DoubleSpatialMaxPoolingNew_init(L);
+  /* nn_DoubleSpatialMaxPoolingNew_init(L); */
 
   return 1;
 }
