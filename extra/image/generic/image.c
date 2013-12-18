@@ -119,10 +119,10 @@ static int image_(Main_scaleBilinear)(lua_State *L) {
   long src_stride0, src_stride1, src_stride2, src_width, src_height;
   long tmp_stride0, tmp_stride1, tmp_stride2, tmp_width, tmp_height;
   long i, j, k;
+  int ndims;
 
   image_(Main_op_validate)(L, Tsrc,Tdst);
-
-  int ndims;
+  
   if (Tdst->nDimension == 3) ndims = 3;
   else ndims = 2;
 
@@ -491,13 +491,14 @@ int image_(Main_rgb2hsl)(lua_State *L) {
   real r,g,b,h,s,l;
   for (y=0; y<rgb->size[1]; y++) {
     for (x=0; x<rgb->size[2]; x++) {
+	  real mn, mx;
       // get Rgb
       r = THTensor_(get3d)(rgb, 0, y, x);
       g = THTensor_(get3d)(rgb, 1, y, x);
       b = THTensor_(get3d)(rgb, 2, y, x);
 
-      real mx = max(max(r, g), b);
-      real mn = min(min(r, g), b);
+      mx = max(max(r, g), b);
+      mn = min(min(r, g), b);
       h = (mx + mn) / 2;
       s = h;
       l = h;
@@ -599,17 +600,18 @@ int image_(Main_rgb2hsv)(lua_State *L) {
   real r,g,b,h,s,v;
   for (y=0; y<rgb->size[1]; y++) {
     for (x=0; x<rgb->size[2]; x++) {
+	  real d,mx,mn;
       // get Rgb
       r = THTensor_(get3d)(rgb, 0, y, x);
       g = THTensor_(get3d)(rgb, 1, y, x);
       b = THTensor_(get3d)(rgb, 2, y, x);
 
-      real mx = max(max(r, g), b);
-      real mn = min(min(r, g), b);
+      mx = max(max(r, g), b);
+      mn = min(min(r, g), b);
       h = mx;
       v = mx;
 
-      real d = mx - mn;
+      d = mx - mn;
       s = (mx==0) ? 0 : d/mx;
 
       if(mx == mn) {
@@ -648,16 +650,18 @@ int image_(Main_hsv2rgb)(lua_State *L) {
   real r,g,b,h,s,v;
   for (y=0; y<hsv->size[1]; y++) {
     for (x=0; x<hsv->size[2]; x++) {
+	  int i;
+	  real f,p,q,t;
       // get hsv
       h = THTensor_(get3d)(hsv, 0, y, x);
       s = THTensor_(get3d)(hsv, 1, y, x);
       v = THTensor_(get3d)(hsv, 2, y, x);
 
-      int i = floor(h*6.);
-      real f = h*6-i;
-      real p = v*(1-s);
-      real q = v*(1-f*s);
-      real t = v*(1-(1-f)*s);
+      i = floor(h*6.);
+      f = h*6-i;
+      p = v*(1-s);
+      q = v*(1-f*s);
+      t = v*(1-(1-f)*s);
 
       switch (i % 6) {
       case 0: r = v, g = t, b = p; break;
@@ -768,11 +772,13 @@ int image_(Main_warp)(lua_State *L) {
           long y_pix = floor(iy);
           real dx = ix - (real)x_pix;
           real dy = iy - (real)y_pix;
-         
+		  real d0,d2,d3,a0,a1,a2,a3,Cc;
           real C[4];
+		  long ofst;
           for (k=0; k<channels; k++) {
             // Sweep by rows through the samples (to calculate final cubic coefs)
             for (jj = 0; jj <= 3; jj++) {
+			  real a0, a1, a2, a3, d0, d2, d3;
               v = y_pix - 1 + jj;
               // We need to clamp all uv values to image border: hopefully 
               // branch prediction and compiler reordering takes care of all
@@ -780,38 +786,36 @@ int image_(Main_warp)(lua_State *L) {
               // skewed).  Alternatively an inline "getPixelSafe" function would
               // would be clearer here, but cannot be done with lua?
               v = MAX(MIN((long)(src_height-1), v), 0);
-              long ofst = k * is[0] + v * is[1];  
+              ofst = k * is[0] + v * is[1];  
               u = x_pix;
               u = MAX(MIN((long)(src_width-1), u), 0);
-              real a0 = src_data[ofst + u * is[2]];
+              a0 = src_data[ofst + u * is[2]];
               u = x_pix - 1;
               u = MAX(MIN((long)(src_width-1), u), 0);
-              real d0 = src_data[ofst + u * is[2]] - a0;
+              d0 = src_data[ofst + u * is[2]] - a0;
               u = x_pix + 1;
               u = MAX(MIN((long)(src_width-1), u), 0);
-              real d2 = src_data[ofst + u * is[2]] - a0;
+              d2 = src_data[ofst + u * is[2]] - a0;
               u = x_pix + 2;
               u = MAX(MIN((long)(src_width-1), u), 0); 
-              real d3 = src_data[ofst + u * is[2]] - a0;
+              d3 = src_data[ofst + u * is[2]] - a0;
 
               // Note: there are mostly static casts, optimizer will take care of
               // of it for us (prevents compiler warnings in new gcc)
-              real a1 =  -(real)1/(real)3*d0 + d2 -(real)1/(real)6*d3;
-              real a2 = (real)1/(real)2*d0 + (real)1/(real)2*d2;
-              real a3 = -(real)1/(real)6*d0 - (real)1/(real)2*d2 + 
-                (real)1/(real)6*d3;
+              a1 =  -(real)1/(real)3*d0 + d2 -(real)1/(real)6*d3;
+              a2 = (real)1/(real)2*d0 + (real)1/(real)2*d2;
+              a3 = -(real)1/(real)6*d0 - (real)1/(real)2*d2 + (real)1/(real)6*d3;
               C[jj] = a0 + dx * (a1 + dx * (a2 + a3 * dx));
             }
  
-            real d0 = C[0]-C[1];
-            real d2 = C[2]-C[1];
-            real d3 = C[3]-C[1];
-            real a0 = C[1];
-            real a1 = -(real)1/(real)3*d0 + d2 - (real)1/(real)6*d3;
-            real a2 = (real)1/(real)2*d0 + (real)1/(real)2*d2;
-            real a3 = -(real)1/(real)6*d0 - (real)1/(real)2*d2 + 
-              (real)1/(real)6*d3;
-            real Cc = a0 + dy * (a1 + dy * (a2 + a3 * dy));
+            d0 = C[0]-C[1];
+            d2 = C[2]-C[1];
+            d3 = C[3]-C[1];
+            a0 = C[1];
+            a1 = -(real)1/(real)3*d0 + d2 - (real)1/(real)6*d3;
+            a2 = (real)1/(real)2*d0 + (real)1/(real)2*d2;
+            a3 = -(real)1/(real)6*d0 - (real)1/(real)2*d2 + (real)1/(real)6*d3;
+            Cc = a0 + dy * (a1 + dy * (a2 + a3 * dy));
 
             // I assume that since the image is stored as reals we don't have 
             // to worry about clamping to min and max int (to prevent over or
@@ -837,10 +841,11 @@ int image_(Main_warp)(lua_State *L) {
           // Calculate fractional and integer components
           long x_pix = floor(ix);
           long y_pix = floor(iy);
+		  float sum_weights;
 
           // Precalculate the L(x) function evaluations in the u and v direction
-          const long rad = 3;  // This is a tunable parameter: 2 to 3 is OK
-          float Lu[2 * rad];  // L(x) for u direction
+# define rad 3  // This is a tunable parameter: 2 to 3 is OK
+		  float Lu[2 * rad];  // L(x) for u direction
           float Lv[2 * rad];  // L(x) for v direction
           for (u=x_pix-rad+1, i=0; u<=x_pix+rad; u++, i++) {
             float du = ix - (float)u;  // Lanczos kernel x value
@@ -868,7 +873,7 @@ int image_(Main_warp)(lua_State *L) {
                 ((float)(M_PI * M_PI) * dv * dv);
             }
           }          
-          float sum_weights = 0;
+          sum_weights = 0;
           for (u=0; u<2*rad; u++) {
             for (v=0; v<2*rad; v++) {
               sum_weights += (Lu[u] * Lv[v]); 
@@ -896,6 +901,7 @@ int image_(Main_warp)(lua_State *L) {
             dst_data[ k*os[0] + y*os[1] + x*os[2] ] = result;
           }
         }
+#undef rad
         break;
       }
     }
@@ -940,13 +946,14 @@ int image_(Main_gaussian)(lua_State *L) {
 
   if (normalize) {
     real sum = 0;
+	real one_over_sum;
     // We could parallelize this, but it's more trouble than it's worth
     for(v = 0; v < height; v++) {
       for(u = 0; u < width; u++) {
         sum += dst_data[ v*os[0] + u*os[1] ];
       }
     }
-    real one_over_sum = 1.0 / sum;
+    one_over_sum = 1.0 / sum;
 #pragma omp parallel for private(v, u)
     for(v = 0; v < height; v++) {
       for(u = 0; u < width; u++) {

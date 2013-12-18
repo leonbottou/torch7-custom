@@ -4,17 +4,21 @@
 
 static int libppm_(Main_load)(lua_State *L)
 {
+  char hdr[256];
+  long W,H,C;
+  char p,n;
+  int D, bps, bpc;
   const char *filename = luaL_checkstring(L, 1);
+  THTensor *tensor;
+  real *data;
+  int val;
+  int i,j,k;
+  unsigned char *r = 0;
+
   FILE* fp = fopen ( filename, "r" );
   if ( !fp ) {
     printf ( "Failed to open file '%s'!\n", filename );
   }
-
-  // parse header
-  char hdr[256]={};
-  long W,H,C;
-  char p,n;
-  int D, bps, bpc;
 
   // magic number
   p = (char)getc(fp);
@@ -46,7 +50,6 @@ static int libppm_(Main_load)(lua_State *L)
   fgets(hdr, 256, fp);
 
   // load data
-  unsigned char *r = NULL;
   if ( n=='6' ) {
     C = 3;
     r = (unsigned char *)malloc(W*H*C*bpc);
@@ -78,10 +81,9 @@ static int libppm_(Main_load)(lua_State *L)
   }
 
   // export tensor
-  THTensor *tensor = THTensor_(newWithSize3d)(C,H,W);
-  real *data = THTensor_(data)(tensor);
-  long i,k,j=0;
-  int val;
+  tensor = THTensor_(newWithSize3d)(C,H,W);
+  data = THTensor_(data)(tensor);
+  i=j=k=0;
   for (i=0; i<W*H; i++) {
     for (k=0; k<C; k++) {
        if (bpc == 1) {
@@ -108,6 +110,9 @@ int libppm_(Main_save)(lua_State *L) {
   THTensor *tensor = luaT_checkudata(L, 2, torch_Tensor);
   THTensor *tensorc = THTensor_(newContiguous)(tensor);
   real *data = THTensor_(data)(tensorc);
+  unsigned char *bytes;
+  long i,k,j;
+  FILE *fp;
 
   // dimensions
   long C,H,W,N;
@@ -126,8 +131,8 @@ int libppm_(Main_save)(lua_State *L) {
   N = C*H*W;
 
   // convert to chars
-  unsigned char *bytes = (unsigned char*)malloc(N);
-  long i,k,j=0;
+  bytes = (unsigned char*)malloc(N);
+  i=j=k=0;
   for (i=0; i<W*H; i++) {
     for (k=0; k<C; k++) {
       bytes[j++] = (unsigned char)data[k*H*W+i];
@@ -135,7 +140,7 @@ int libppm_(Main_save)(lua_State *L) {
   }
 
   // open file
-  FILE* fp = fopen(filename, "w");
+  fp = fopen(filename, "w");
   if ( !fp ) {
     luaL_error(L, "cannot open file <%s> for reading", filename);
   }
