@@ -46,7 +46,7 @@ the *Reg versions just consist in preloading the pixel information before writin
 */
 
 __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int nInputPlane2, int valuesperthread, int padleft, int padright, int padup, int paddown)
 {
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
@@ -65,12 +65,12 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
 	
 	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane2;
 
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+	int stridej = (kH*kW - dW) * nInputPlane2;
+	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane2;
 	
-	if(tidx<nInputPlane) {
+	if(tidx<nInputPlane2) {
 		for(i=imin; i<imax+1; i++) {
 			for(j=jmin; j<jmax+1; j++) {
 				if(zeropad) 
@@ -383,16 +383,18 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   long padright = luaT_getfieldcheckint(L, 1, "padright");
   long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
+  long nInputPlane2 = luaT_getfieldcheckint(L, 1, "nInputPlane");
 
   //luaL_argcheck(L, dimension >= 0 && dimension < input->nDimension, 2, "dimension out of range");
 
-  assert(nInputPlane%32 == 0 || nInputPlane<32);
+  assert(nInputPlane2%32 == 0 || nInputPlane2<32);
   assert(nOutputPlane%32 == 0);
 
 
   // input should be contiguous already but... well.
-  input = THCudaTensor_newContiguous(input);
+  // input = THCudaTensor_newContiguous(input);
+  long nInputPlane=input->stride[1];
+	printf("%d", nInputPlane);
 
   // find the size of kernelslices
   long isize1 = input->size[0];
@@ -401,7 +403,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   long size2 = (isize2 - kW + padleft + padright) / dW + 1;
 
 //  THCudaTensor* kernelSlices = THCudaTensor_newWithSize1d(size1*size2*kW*kH*nInputPlane);
-  THCudaTensor_resize1d(kernelSlices, size1*size2*kW*kH*nInputPlane);
+  THCudaTensor_resize1d(kernelSlices, size1*size2*kW*kH*nInputPlane2);
   THCudaTensor_resize2d(output, size1* size2, nOutputPlane);
 
   float* ptrkslices = THCudaTensor_data(kernelSlices);
@@ -413,36 +415,36 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   // cuda blocks & threads:
   dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
   dim3 threads (32);
-  long valuesperthread=nInputPlane/32;
+  long valuesperthread=nInputPlane2/32;
   if(valuesperthread==0) { valuesperthread=1; } 
 
 	  //with an upper bound on the number of planes, we can be more efficient
 	  //kernel unfold inputs
-	  if (nInputPlane >1024 || shdmem==0) {
+	  if (nInputPlane2 >1024 || shdmem==0) {
 	  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, nInputPlane2, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane >512) {
+	  else if (nInputPlane2 >512) {
 		copyPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane >384) {
+	  else if (nInputPlane2 >384) {
 		copyPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane >256) {
+	  else if (nInputPlane2 >256) {
 		copyPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane >128) {
+	  else if (nInputPlane2 >128) {
 		copyPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane >32) {
+	  else if (nInputPlane2 >32) {
 		copyPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
 	  }
-	  else if (nInputPlane ==3) {
+	  else if (nInputPlane2 ==3) {
 		  dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10);
 		  dim3 threadsRGB (3,10);
 		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
@@ -453,7 +455,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 1, padleft, padright, padup, paddown);
 	  }
 
-  THCudaTensor_free(input); 
+  //THCudaTensor_free(input); 
 
 
 
@@ -465,10 +467,10 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 
 
   // unfold conv kernels by resizing
-  THCudaTensor_resize2d(kernels, nOutputPlane, kW*kH*nInputPlane);
+  THCudaTensor_resize2d(kernels, nOutputPlane, kW*kH*nInputPlane2);
   THCudaTensor_transpose(kernels, NULL, 0, 1);
   // put kernelslices in matrix mode
-  THCudaTensor_resize2d(kernelSlices, size1*size2,kW*kH*nInputPlane);
+  THCudaTensor_resize2d(kernelSlices, size1*size2,kW*kH*nInputPlane2);
 
 //  printf("sgemm\n");
   // do addmm on output
