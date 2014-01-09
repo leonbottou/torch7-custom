@@ -7,28 +7,74 @@ require 'torchffi'
 
 local TH=ffi.load("TH")
 ffi.cdef([[ void THFloatBlas_gemm(char transa, char transb, long m, long n, long k, 
-                      float alpha, float *a, long lda, 
-                      float *b, long ldb, double beta, 
-                      float *c, long ldc);
+                      float alpha, float *a, long lda, float *b, long ldb, 
+                      double beta, float *c, long ldc);
                void THDoubleBlas_gemm(char transa, char transb, long m, long n, long k, 
-                       double alpha, double *a, long lda, 
-                       double *b, long ldb, double beta, 
-                       double *c, long ldc); ]])
+                      double alpha, double *a, long lda, double *b, long ldb, 
+                      double beta, double *c, long ldc); ]])
 
-function GEMM(type, ...)
+function GEMM(type, transa, transb, ...)
    assert(type == "torch.FloatTensor" or type == "torch.DoubleTensor")
+   transa = ffi.new('char', string.byte(transa or 'N'))
+   transb = ffi.new('char', string.byte(transb or 'N'))
    if type == "torch.FloatTensor" then 
-      TH.THFloatBlas_gemm(...)
+      TH.THFloatBlas_gemm(transa,transb,...)
    else
-      TH.THRealBlas_gemm(...)
+      TH.THDoubleBlas_gemm(transa,transb,...)
    end 
 end
 
 
 
+--- utilities
+
+local function newSameTensor(asthis, ...)
+   -- create a tensor of same type as <asthis> with the specified dimensions
+   return asthis.new(torch.LongStorage{...})
+end
+
+local function narrowTensorAndZero(tensor,dim,index,size)
+   -- narrow a tensor while clearing the remaining parts
+   if index > 1 then
+      tensor:narrow(dim,1,index-1):zero()
+   end
+   if index + size - 1 < tensor:size(dim) then
+      tensor:narrow(dim,index + size, tensor:size(dim) - index - size + 1):zero()
+   end
+   return tensor:narrow(dim,index,size)
+end
+
+local function copySpatialConvolutionKernel(kernel, reverse)
+   -- copy spatial convolution kernel
+   local kh,sh = kernel:size(1), kernel:stride(1)
+   local ko,so = kernel:size(2), kernel:stride(2)
+   local kw,sw = kernel:size(3), kernel:stride(3)
+   local ki,si = kernel:size(4), kernel:stride(4)
+   local kp = torch.data(kernel)
+   local kcopy = newSameTensor(kernel,kh,ko,kw,ki)
+   local kr = torch.data(kcopy)
+   local k = 0
+   for h=0,kh-1 do
+      for o=0,ko-1 do
+         for w=0,kw-1 do
+            for i=0,ki-1 do
+               if reverse then
+                  kr[k] = kp[ sh*(kh-1-h) + so*o + sw*(kw-1-w) + si*i ]
+               else
+                  kr[k] = kp[ sh*h + so*o + sw*w + si*i ]
+               end
+               k = k + 1
+            end
+         end
+      end
+   end
+   return kcopy
+end
+
+
 --- spatial convolution
 
-function SpatialConvolutionAcc(result, input, kernel, parms)
+function SpatialConvolution(result, input, kernel, parms)
    
    -- typecheck
    local type = torch.typename(input)
@@ -50,7 +96,7 @@ function SpatialConvolutionAcc(result, input, kernel, parms)
    local kw = kernel:size(3) -- kernel width
    assert(ip == kernel:size(4)) -- input planes
       
-   -- parameters
+   -- optional parameters
    parms = parms or {}
    local padleft = parms.padleft or 0; -- input padding
    local padtop = parms.padtop or 0;
@@ -60,83 +106,171 @@ function SpatialConvolutionAcc(result, input, kernel, parms)
    local stridey = parms.stridey or 1;
    local reverse = parms.reverse or false; -- reversed kernel for backpropagation
    local exact = parms.exact or false; -- error if padding is not exact
+   local alpha = parms.alpha or 1;
+   local beta = parms.beta or 0;
    
    -- compute output size
    local ow = math.floor((iw + padleft + padright - kw) / stridex) + 1
-   local oh = math.floor((ih + padtop + padbottom - kh) / stridex) + 1
-   
+   local oh = math.floor((ih + padtop + padbottom - kh) / stridey) + 1
+
    -- correct padright and padbottom
    local oldpadright = padright
    local oldpadbottom = padbottom
-   padright = padleft + iw - ow * stridex + kw - ow;
-   padbottom = padtop + ih - oh * stridey + kh - oh;
+   padright = (ow - 1) * stridex + kw  - iw - padleft;
+   padbottom = (oh - 1) * stridey + kh - ih - padtop;
    assert(not exact or padright ~= oldpadright, "horizontal size mismatch") 
    assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch") 
-   local piw = padleft + iw + padright;
+      
+   -- input size with padding
+   local piw = padleft + iw + padright; 
    local pih = padtop + ih + padbottom;
-   
+
    -- number of horizontal strides between nonoverlapping runs
    local nxs = math.floor((kw + stridex - 1) / stridex)
    
-   -- number of nonoverlapping runs to clear the padded width
+   -- number of nonoverlapping runs to clear the padded image width
    local nxn = math.floor((piw + nxs * stridex - 1) / (nxs * stridex))
-   
-   -- total padded row size
-   local tow = nxn * nxs
-   local tiw = tow * stridex
    
    -- number of vertical strides to clear the padded image height
    local nyn = math.floor((pih + stridey - 1) / stridey)
    
-   -- total padded vertical image size
-   local toh = nyn   
+   -- total size of input and output buffers
+   local tow = nxn * nxs
+   local tiw = tow * stridex
+   local toh = nyn
+   local tih = nyn * stridey   
       
-   -- copy input into contiguous padded memory chunk
-   local icopy =  input:new(stridey * bs * toh * tiw * ip)
-   local iptr = torch.data(iptr)
-   do 
-      ---- TODO
-   end
-   
-   -- copy kernel into contiguous memory chunk
-   local kcopy = kernel:new(kernel:nElement())
-   local kptr = torch.data(kcopy)
-   do
-      local kh,sh = kernel.size(1), kernel.stride(1)
-      local ko,so = kernel.size(2), kernel.stride(2)
-      local kw,sw = kernel.size(3), kernel.stride(3)
-      local ki,si = kernel.size(4), kernel.stride(4)
-      local kp = torch.data(kernel)
-      local k = 0
-      for h=1,kh do
-         for o=1,ko do
-            for w=1,kw do
-               for i=1,ki do
-                  if reverse then
-                     kptr[k] = kp[ sh*(kh-h+1) + so*o + sw*(kw-w+1) + si*i ]
-                  else
-                     kptr[k] = kp[ sh*h + so*o + sw*w + si*i ]
-                  end
-                  k = k + 1
-               end
-            end
-         end
-      end
+   -- copy image into input buffer
+   local icopy =  newSameTensor(input, stridey, bs, tih, tiw, ip)
+   for s=1,stridey do
+      local ticopy = icopy:select(1,s)
+      local tinput = input:narrow(2,s,ih+1-s)
+      local tinputSizes = tinput:size()
+      local tinputStrides = tinput:stride()
+      tinputStrides[2] = tinputStrides[2] * stridey
+      tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
+      tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
+      ticopy = narrowTensorAndZero(ticopy, 2, padtop+1, tinput:size(2))
+      ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
+      ticopy:copy(tinput)
    end
 
-   -- allocate and clear contiguous padded memory for output
-   local ocopy = output:new(bs * toh * tow * op)
-   local optr = torch.data(ocopy)
-   ocopy:zero()
-      
+   -- copy kernel into kernel buffer
+   local kcopy = copySpatialConvolutionKernel(kernel,reverse)
+
+   -- allocate and clear output buffer
+   local ocopy = newSameTensor(result, bs, toh, tow, op)
+   ocopy:fill(0)
+
    -- call GEMM
-   ---- TODO 
+   for hcall = 1,nxs do
+      for vcall = 1,kh do
+         local sq = math.floor((vcall-1) / stridey)
+         local sr = (vcall-1) - sq * stridey
+         local iptr = torch.data(icopy[{sr+1,{},sq+1,(hcall-1)*stridex+1,{}}])
+         local kptr = torch.data(kcopy:select(1,vcall))
+         local optr = torch.data(ocopy:select(3,hcall))
+         GEMM(type,'T','N', op, bs*nxn*toh, kw*ip, 
+              1, kptr, kw*ip, iptr, nxs*stridex*ip,
+              1, optr, nxs*op ) 
+      end
+   end
       
    -- accumulate output chunk into result tensor
-   do
-      result:resize(bs,oh,ow,op)
-      local rptr = torch.data(result)
-      ---- TODO 
+   result:resize(bs,oh,ow,op)
+   local tocopy = ocopy:narrow(2,1,oh):narrow(3,1,ow)
+   if beta == 0 and alpha == 1 then
+      result:copy(tocopy)
+   elseif beta == 0 then
+      result:mul(tocopy, alpha)
+   elseif beta == 1 then
+      result.add(tocopy, alpha)
+   else
+      result.mul(beta)
+      result.add(tocopy, value)
    end
    return result
 end
+
+
+
+-------------------------------------
+-- test1: simple kernel
+
+function test1(iw,ih,kw,kh)
+    a = torch.rand(ih,iw)
+   k = torch.rand(kh,kw)
+   c = torch.xcorr2(a,k,'V')
+   al = a:reshape(1,ih,iw,1)
+   kl = k:reshape(kh,1,kw,1)
+   cl = c:clone()
+   SpatialConvolution(cl,al,kl)
+   print(c)
+   print(cl[{1,{},{},1}])
+end
+
+-- test1(4,7,3,2)
+
+-------------------------------------
+-- test2: reversed kernel
+
+function test2(iw,ih,kw,kh)
+   a = torch.rand(ih,iw)
+   k = torch.rand(kh,kw)
+   c = torch.conv2(a,k,'V')
+   al = a:reshape(1,ih,iw,1)
+   kl = k:reshape(kh,1,kw,1)
+   cl = c:clone()
+   SpatialConvolution(cl,al,kl,{reverse=true})
+   print(c)
+   print(cl[{1,{},{},1}])
+end
+
+-- test2(4,7,3,2)
+
+-------------------------------------
+-- test3: stridex
+
+function test3(iw,ih,kw,kh)
+    a = torch.rand(ih,iw)
+   k = torch.rand(kh,kw)
+   c = torch.xcorr2(a,k,'V') -- does not have stride. take every other column
+   al = a:reshape(1,ih,iw,1)
+   kl = k:reshape(kh,1,kw,1)
+   cl = c:clone()
+   SpatialConvolution(cl,al,kl,{stridex=2})
+   print(c)
+   print(cl[{1,{},{},1}])
+end
+
+-- test3(8,4,3,2)
+
+-------------------------------------
+-- test4: stridey
+
+function test4(iw,ih,kw,kh)
+    a = torch.rand(ih,iw)
+   k = torch.rand(kh,kw)
+   c = torch.xcorr2(a,k,'V') -- does not have stride. take every other row
+   al = a:reshape(1,ih,iw,1)
+   kl = k:reshape(kh,1,kw,1)
+   cl = c:clone()
+   SpatialConvolution(cl,al,kl,{stridey=2})
+   print(c)
+   print(cl[{1,{},{},1}])
+end
+
+-- test4(4,9,3,7)
+
+
+-------------------------------------
+-- to be tested
+-- * padding
+-- * multiple input/output planes 
+-- * mini-batches
+-- * bound checks with valgrind
+
+
+-------------------------------------
+-- challenge
+-- * C version with zero based indices
