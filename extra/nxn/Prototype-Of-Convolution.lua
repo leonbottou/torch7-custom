@@ -105,8 +105,9 @@ function SpatialConvolution(result, input, kernel, parms)
    local stridex = parms.stridex or 1; -- convolution stride
    local stridey = parms.stridey or 1;
    local reverse = parms.reverse or false; -- reversed kernel for backpropagation
-   local exact = parms.exact or false; -- error if padding is not exact
-   local alpha = parms.alpha or 1;
+   local exact = parms.exact; -- error if padding is not exact
+   local overlap = parms.overlap; -- whether blas takes overlapped matrices
+   local alpha = parms.alpha or 1; -- result=alpha*result+beta*convolution
    local beta = parms.beta or 0;
    
    -- compute output size
@@ -126,7 +127,10 @@ function SpatialConvolution(result, input, kernel, parms)
    local pih = padtop + ih + padbottom;
 
    -- number of horizontal strides between nonoverlapping runs
-   local nxs = math.floor((kw + stridex - 1) / stridex)
+   local nxs = 1
+   if not overlap then
+      nxs = math.floor((kw + stridex - 1) / stridex)
+   end
    
    -- number of nonoverlapping runs to clear the padded image width
    local nxn = math.floor((piw + nxs * stridex - 1) / (nxs * stridex))
@@ -181,8 +185,6 @@ function SpatialConvolution(result, input, kernel, parms)
    local tocopy = ocopy:narrow(2,1,oh):narrow(3,1,ow)
    if beta == 0 and alpha == 1 then
       result:copy(tocopy)
-   elseif beta == 0 then
-      result:mul(tocopy, alpha)
    elseif beta == 1 then
       result.add(tocopy, alpha)
    else
