@@ -13,3 +13,5 @@ include('SpatialMaxPooling.lua')
 include('CrossMapNormalization.lua')
 include('SoftMax.lua')
 
+include('ConvProto.lua')
+
