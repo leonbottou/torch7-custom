@@ -105,10 +105,13 @@ function SpatialConvolution(result, input, kernel, parms)
    local stridex = parms.stridex or 1; -- convolution stride
    local stridey = parms.stridey or 1;
    local reverse = parms.reverse or false; -- reversed kernel for backpropagation
-   local exact = parms.exact or false; -- error if padding is not exact
-   local alpha = parms.alpha or 1;
+   local exact = parms.exact; -- error if padding is not exact
+   local overlap = parms.overlap; -- whether blas takes overlapped matrices
+   local alpha = parms.alpha or 1; -- result=alpha*result+beta*convolution
    local beta = parms.beta or 0;
-   
+   assert(padleft>=0 and padtop>=0 and padright>=0 and padbottom>=0)
+   assert(stridex>=1 and stridey>=1)
+
    -- compute output size
    local ow = math.floor((iw + padleft + padright - kw) / stridex) + 1
    local oh = math.floor((ih + padtop + padbottom - kh) / stridey) + 1
@@ -116,35 +119,42 @@ function SpatialConvolution(result, input, kernel, parms)
    -- correct padright and padbottom
    local oldpadright = padright
    local oldpadbottom = padbottom
-   padright = (ow - 1) * stridex + kw  - iw - padleft;
-   padbottom = (oh - 1) * stridey + kh - ih - padtop;
-   assert(not exact or padright ~= oldpadright, "horizontal size mismatch") 
-   assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch") 
+   padright = ow * stridex + kw - stridex - iw - padleft;
+   padbottom = oh * stridey + kh - stridey - ih - padtop;
+   assert(not exact or padright ~= oldpadright, "horizontal size mismatch");
+   assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch");
+   if padright < 0 then padright = 0 end
+   if padbottom < 0 then padbottom = 0 end
       
    -- input size with padding
    local piw = padleft + iw + padright; 
    local pih = padtop + ih + padbottom;
 
    -- number of horizontal strides between nonoverlapping runs
-   local nxs = math.floor((kw + stridex - 1) / stridex)
+   local nxs = 1
+   if not overlap then
+      nxs = math.floor((kw + stridex - 1) / stridex)
+   end
    
-   -- number of nonoverlapping runs to clear the padded image width
-   local nxn = math.floor((piw + nxs * stridex - 1) / (nxs * stridex))
-   
-   -- number of vertical strides to clear the padded image height
-   local nyn = math.floor((pih + stridey - 1) / stridey)
+   -- total size of output buffer
+   local tow = math.floor((piw + stridex - 1) / stridex)
+   local toh = math.floor((pih + stridey - 1) / stridey)
    
    -- total size of input and output buffers
-   local tow = nxn * nxs
-   local tiw = tow * stridex
-   local toh = nyn
-   local tih = nyn * stridey   
-      
+   local tiw = tow * stridex;
+   local tih = toh * stridey;  
+   assert(tiw >= piw and piw >= iw)
+   assert(tih >= pih and pih >= ih)
+
    -- copy image into input buffer
    local icopy =  newSameTensor(input, stridey, bs, tih, tiw, ip)
-   for s=1,stridey do
-      local ticopy = icopy:select(1,s)
-      local tinput = input:narrow(2,s,ih+1-s)
+   for s=0,stridey-1 do
+      local ticopy = icopy:select(1,s+1)
+      local t = s - padtop
+      while t < 0 do
+         t = t + stridey
+      end
+      local tinput = input:narrow(2,t+1,ih-t)
       local tinputSizes = tinput:size()
       local tinputStrides = tinput:stride()
       tinputStrides[2] = tinputStrides[2] * stridey
@@ -163,14 +173,16 @@ function SpatialConvolution(result, input, kernel, parms)
    ocopy:fill(0)
 
    -- call GEMM
-   for hcall = 1,nxs do
-      for vcall = 1,kh do
-         local sq = math.floor((vcall-1) / stridey)
-         local sr = (vcall-1) - sq * stridey
-         local iptr = torch.data(icopy[{sr+1,{},sq+1,(hcall-1)*stridex+1,{}}])
-         local kptr = torch.data(kcopy:select(1,vcall))
-         local optr = torch.data(ocopy:select(3,hcall))
-         GEMM(type,'T','N', op, bs*nxn*toh, kw*ip, 
+   for hcall =0,nxs-1 do
+      for vcall = 0,kh-1 do
+         local sq = math.floor(vcall / stridey)
+         local sr = vcall - sq * stridey
+         local iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}])
+         local kptr = torch.data(kcopy:select(1,vcall+1))
+         local optr = torch.data(ocopy:select(3,hcall+1))
+         local nrun = (bs-1)*toh*tow + oh*tow
+         local ngem = math.floor((nrun - hcall) / nxs)
+         GEMM(type,'T','N', op, ngem, kw*ip, 
               1, kptr, kw*ip, iptr, nxs*stridex*ip,
               1, optr, nxs*op ) 
       end
@@ -181,8 +193,6 @@ function SpatialConvolution(result, input, kernel, parms)
    local tocopy = ocopy:narrow(2,1,oh):narrow(3,1,ow)
    if beta == 0 and alpha == 1 then
       result:copy(tocopy)
-   elseif beta == 0 then
-      result:mul(tocopy, alpha)
    elseif beta == 1 then
       result.add(tocopy, alpha)
    else
@@ -197,14 +207,14 @@ end
 -------------------------------------
 -- test1: simple kernel
 
-function test1(iw,ih,kw,kh)
+function test1(iw,ih,kw,kh,parm)
     a = torch.rand(ih,iw)
    k = torch.rand(kh,kw)
    c = torch.xcorr2(a,k,'V')
    al = a:reshape(1,ih,iw,1)
    kl = k:reshape(kh,1,kw,1)
    cl = c:clone()
-   SpatialConvolution(cl,al,kl)
+   SpatialConvolution(cl,al,kl,parm)
    print(c)
    print(cl[{1,{},{},1}])
 end
