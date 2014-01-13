@@ -160,14 +160,15 @@ function SpatialConvolution(result, input, kernel, parms)
       tinputStrides[2] = tinputStrides[2] * stridey
       tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
       tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
-      ticopy = narrowTensorAndZero(ticopy, 2, padtop+1, tinput:size(2))
+--      ticopy = narrowTensorAndZero(ticopy, 2, padtop+1, tinput:size(2))
+      ticopy = narrowTensorAndZero(ticopy, 2, math.ceil(math.max(padtop-s,0)/stridey +1), tinput:size(2))
       ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
       ticopy:copy(tinput)
    end
 
    -- copy kernel into kernel buffer
    local kcopy = copySpatialConvolutionKernel(kernel,reverse)
-
+   
    -- allocate and clear output buffer
    local ocopy = newSameTensor(result, bs, toh, tow, op)
    ocopy:fill(0)
@@ -187,7 +188,7 @@ function SpatialConvolution(result, input, kernel, parms)
               1, optr, nxs*op ) 
       end
    end
-      
+         
    -- accumulate output chunk into result tensor
    result:resize(bs,oh,ow,op)
    local tocopy = ocopy:narrow(2,1,oh):narrow(3,1,ow)
