@@ -147,22 +147,19 @@ function SpatialConvolution(result, input, kernel, parms)
    assert(tih >= pih and pih >= ih)
 
    -- copy image into input buffer
---   local icopy =  newSameTensor(input, stridey, bs, tih, tiw, ip)
-   local icopy =  newSameTensor(input, stridey, bs, math.ceil(tih/stridey), tiw, ip)
+   local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip)
    for s=0,stridey-1 do
       local ticopy = icopy:select(1,s+1)
-      local t = s - padtop
-      while t < 0 do
-         t = t + stridey
-      end
-      local tinput = input:narrow(2,t+1,ih-t)
+      local fout = math.floor((math.max(0,padtop-s)+stridey-1)/stridey)
+      local fin = fout * stridey - padtop + s
+      assert(fout >= 0 and fin >= 0)
+      local tinput = input:narrow(2,fin+1,ih-fin)
       local tinputSizes = tinput:size()
       local tinputStrides = tinput:stride()
       tinputStrides[2] = tinputStrides[2] * stridey
       tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
       tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
---      ticopy = narrowTensorAndZero(ticopy, 2, padtop+1, tinput:size(2))
-      ticopy = narrowTensorAndZero(ticopy, 2, math.ceil(math.max(padtop-s,0)/stridey +1), tinput:size(2))
+      ticopy = narrowTensorAndZero(ticopy, 2, fout+1, tinput:size(2))
       ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
       ticopy:copy(tinput)
    end
