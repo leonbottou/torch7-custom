@@ -153,15 +153,19 @@ function SpatialConvolution(result, input, kernel, parms)
       local fout = math.floor((math.max(0,padtop-s)+stridey-1)/stridey)
       local fin = fout * stridey - padtop + s
       assert(fout >= 0 and fin >= 0)
-      local tinput = input:narrow(2,fin+1,ih-fin)
-      local tinputSizes = tinput:size()
-      local tinputStrides = tinput:stride()
-      tinputStrides[2] = tinputStrides[2] * stridey
-      tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
-      tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
-      ticopy = narrowTensorAndZero(ticopy, 2, fout+1, tinput:size(2))
-      ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
-      ticopy:copy(tinput)
+      if fin < ih then
+         local tinput = input:narrow(2,fin+1,ih-fin)
+         local tinputSizes = tinput:size()
+         local tinputStrides = tinput:stride()
+         tinputStrides[2] = tinputStrides[2] * stridey
+         tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
+         tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
+         ticopy = narrowTensorAndZero(ticopy, 2, fout+1, tinput:size(2))
+         ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
+         ticopy:copy(tinput)
+      else
+         ticopy:zero()
+      end
    end
    
    --print(icopy)

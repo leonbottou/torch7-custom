@@ -1,11 +1,11 @@
 local ConvProto, parent = torch.class('nxn.ConvProto', 'nxn.Module')
 
 
---dofile('/home/ROCQ/willow/moquab/torch/torch7-custom/extra/nxn/Prototype-Of-Convolution.lua')
+paths.dofile('Prototype-Of-Convolution.lua')
 
 
 
-function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem, padleft, padright, padup, paddown)
+function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padup, paddown)
    parent.__init(self)
 
    dW = dW or 1
