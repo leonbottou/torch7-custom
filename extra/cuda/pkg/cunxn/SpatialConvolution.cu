@@ -394,7 +394,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   // input should be contiguous already but... well.
   // input = THCudaTensor_newContiguous(input);
   long nInputPlane=input->stride[1];
-	printf("%d", nInputPlane);
+	//printf("%d", nInputPlane);
 
   // find the size of kernelslices
   long isize1 = input->size[0];

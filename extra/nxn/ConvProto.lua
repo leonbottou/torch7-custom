@@ -1,7 +1,7 @@
 local ConvProto, parent = torch.class('nxn.ConvProto', 'nxn.Module')
 
 
-paths.dofile('Prototype-Of-Convolution.lua')
+--paths.dofile('Prototype-Of-Convolution.lua')
 
 
 

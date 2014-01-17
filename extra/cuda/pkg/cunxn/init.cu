@@ -13,6 +13,7 @@
 #include "SpatialConvolution.cu"
 #include "SpatialMaxPooling.cu"
 #include "SpatialGlobalMaxPooling.cu"
+#include "testSgemm.cu"
 
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunxn(lua_State *L);
@@ -27,6 +28,7 @@ int luaopen_libcunxn(lua_State *L)
   cunxn_SpatialConvolution_init(L);
   cunxn_SpatialMaxPooling_init(L);
   cunxn_SpatialGlobalMaxPooling_init(L);
+  cunxn_testSgemm_init(L);
 
   return 1;
 }

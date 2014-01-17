@@ -14,4 +14,5 @@ include('CrossMapNormalization.lua')
 include('SoftMax.lua')
 
 include('ConvProto.lua')
+include('testSgemm.lua')
 
