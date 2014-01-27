@@ -8,7 +8,7 @@ require 'torchffi'
 local TH=ffi.load("TH")
 ffi.cdef([[ void THFloatBlas_gemm(char transa, char transb, long m, long n, long k, 
                       float alpha, float *a, long lda, float *b, long ldb, 
-                      double beta, float *c, long ldc);
+                      float beta, float *c, long ldc);
                void THDoubleBlas_gemm(char transa, char transb, long m, long n, long k, 
                       double alpha, double *a, long lda, double *b, long ldb, 
                       double beta, double *c, long ldc); ]])
@@ -206,59 +206,54 @@ function SpatialConvolution(result, input, kernel, parms)
    return result
 end
 
-
-
 local function copySpatialConvolutionKernelReverse(kernel, stridex, stridey)
-   -- copy spatial convolution kernel
    local kh,sh = kernel:size(1), kernel:stride(1)
    local ko,so = kernel:size(2), kernel:stride(2)
    local kw,sw = kernel:size(3), kernel:stride(3)
    local ki,si = kernel:size(4), kernel:stride(4)
    local kp = torch.data(kernel)
-   local kcopy = newSameTensor(kernel,kh,ko,kw,ki)
-   local kr = torch.data(kcopy)
-   local k = 0
-   for h=0,kh-1 do
-      for o=0,ko-1 do
-         for w=0,kw-1 do
-            for i=0,ki-1 do
-               kr[k] = kp[ sh*(kh-1-h) + so*o + sw*(kw-1-w) + si*i ]
-               k = k + 1
-            end
-         end
-      end
-   end
-   kcopy=kcopy:transpose(2,4)
-   kcopy=kcopy:contiguous()
    
    kouth=math.floor((kh+stridey-1)/stridey)
    kouto=ki
    koutw=math.floor((kw+stridex-1)/stridex)
    kouti=ko
    
-   local kout = newSameTensor(kernel, stridey, stridex, kouth, kouto, koutw, kouti)
+   kout = newSameTensor(kernel, stridey, stridex, kouth, kouto, koutw, kouti)
    kout:zero()
+   koptr = torch.data(kout)
+   
+   i=0
    
    for stry=1,stridey do
       for strx=1,stridex do
          for ith=1, kouth do
-            for itw=1, koutw do
-               ycoord=(ith-1)*stridey+1+stry-1
-               xcoord=(itw-1)*stridex+1+strx-1
-               --                  print(stry,strx,ith,itw,ycoord,xcoord)
-               if ycoord<kh+1 and xcoord<kw+1 then
-                  tkout=kout:select(5,itw):select(3,ith):select(2,strx):select(1,stry)
-                  tkcopy=kcopy:select(3,xcoord):select(1,ycoord)
-                  --                  print(tkcopy)
-                  tkout:copy(tkcopy)
-                  --                  kout[{stry, strx, ith, {}, itw, {}}]:copy(kcopy[{{ycoord, {}, xcoord, {}}}])
+            ycoord=kh+1-((ith-1)*stridey+1+stry-1)
+            if ycoord<kh+1 and ycoord>0 then
+               for ito=1, kouto do
+                  for itw=1, koutw do
+                     xcoord=kw+1-((itw-1)*stridex+1+strx-1)
+                     if xcoord<kw+1 and xcoord>0 then
+                        for iti=1, kouti do
+                           --kout[{stry, strx, ith, ito, itw, iti}] = kernel[{ycoord, iti, xcoord, ito}]
+                           koptr[i] = kp[(ycoord-1)*sh+(iti-1)*so+(xcoord-1)*sw+(ito-1)*si]
+                           i=i+1
+                        end
+                     else
+                        i = i + kouti
+                     end
+                  end
                end
+            else
+               i = i + kouti*koutw*kouto
             end
          end
       end
    end
    
+   
    return kout
+   
+   
 end
 
 
@@ -317,19 +312,14 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    
    
    revk = copySpatialConvolutionKernelReverse(kernel, stridex, stridey)
-   -- kout = newSameTensor(kernel, stridey, stridex, kouth, kouto, koutw, kouti)
    revkh = revk:size(3)
    revkw = revk:size(5)
    
    
--- test bs=1, strides=1...   
    
    -- create gradinput tensor :
    giw = ( gow + revkw -1 ) * stridex
-   --giw = giw + stridex - math.mod(giw,stridex)   
    gih = ( goh + revkh -1 ) 
-   --giw = iw + stridex - math.mod(iw,stridex)
-   --gih = math.ceil(ih/stridey)+1
    gradin = newSameTensor(gradOutput, stridey, bs, gih, giw, ip)
    gradin:zero()
    
@@ -340,8 +330,9 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    pgoh = ( goh + revkh -1 ) 
 
    
-
-   gradOutCopy = newSameTensor(gradOutput, bs+1, pgoh, pgow, op)
+      -- here we take bs+1 to have some zero-padding at the end of the matrix
+      -- it only costs some memory. GEMM does not use it.
+   gradOutCopy = newSameTensor(gradOutput, bs+1, pgoh, pgow, op) 
    tgocopy=narrowTensorAndZero(gradOutCopy, 1, 1, bs)
    tgocopy=narrowTensorAndZero(tgocopy, 2, revkh, goh)
    tgocopy=narrowTensorAndZero(tgocopy, 3, revkw, gow)
@@ -372,6 +363,24 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    end
    
    
+   -- correct padright and padbottom
+   local oldpadright = padright
+   local oldpadbottom = padbottom
+   padright = gow * stridex + kw - stridex - iw - padleft;
+   padbottom = goh * stridey + kh - stridey - ih - padtop;
+   assert(not exact or padright ~= oldpadright, "horizontal size mismatch");
+   assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch");
+   if padright < 0 then padright = 0 end
+   if padbottom < 0 then padbottom = 0 end
+   
+   -- input size with padding
+   local piw = padleft + iw + padright; 
+   local pih = padtop + ih + padbottom;
+   
+   
+   
+   
+
    
    throwawayx=stridex - math.mod(kw,stridex)
    throwawayy=stridey - math.mod(kh,stridey)
@@ -380,15 +389,9 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    if throwawayx==stridex then throwawayx=0 end
    if throwawayy==stridey then throwawayy=0 end
    
-   --throwawayx=0
-   --throwawayy=0
-   
-   --result = newSameTensor(gradOutput, bs, resh - throwawayy, resw - throwawayx, ip)
-   --resw = gow*stridex + kw-1
-   --resh = goh*stridey + kh-1
-   
-   resw=iw
-   resh=ih
+
+   resw=piw
+   resh=pih
    result = newSameTensor(gradOutput, bs, resh, resw, ip):fill(0)
    
 
@@ -406,42 +409,20 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
       
       -- select proper area in result tensor ()
       tresult = result:narrow(3,1, giw-throwawayx)
-      
       if throwaway then
          tresult = tresult:narrow(2, (stridey-stry+1) - throwawayy + stridey, gih-1)
       else
          tresult = tresult:narrow(2, (stridey-stry+1) - throwawayy, gih)         
       end      
       
-      --tresult = tresult:narrow(2,stry, gih)
-      
-      --if throwaway then
-      --   tresult = tresult:narrow(2,1, gih-1)
-      --end
       local tresultSizes = tresult:size()
       local tresultStrides = tresult:stride()
       tresultStrides[2] = tresultStrides[2] * stridey
-      --tresultSizes[2] = gih
       tresult = tresult.new(tresult:storage(), tresult:storageOffset(), tresultSizes, tresultStrides)
-      
-      
-      
-      
-      
-      --   gradin = newSameTensor(gradOutput, stridey, bs, gih, giw, ip)
-      --tgicopy = tgicopy:narrow(3,throwawayx+1, giw-throwawayx)
       tresult:copy(tgicopy)
-      --print(result)
    end
  
-
-   
-   -- GEMM calls : 
-   -- outer loop on stry=1,stridey (is done independently because of varying leading dim => simultaneously)
-   -- loop on vcall = 1,revkh must be done sequentially
-   -- loop on strx = 1,stridex can be done simultaneously (beginning offset = strx)
-   
-   
+   result=result:narrow(2, padtop+1, ih):narrow(3, padleft+1, iw)
    
 
    
@@ -453,6 +434,12 @@ end
 
 
 
+function ComputeGradWeights(gradOutput, input, kernel, parms)
+   gradweight = kernel:clone():zero()
+   
+   
+   
+end
 
 
 
