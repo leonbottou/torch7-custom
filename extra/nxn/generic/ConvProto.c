@@ -244,7 +244,290 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
   THArgCheck( nOutputPlane == gradOutput->size[input->nDimension == 4 ? 1 : 0], 1, "Number of output features is not equal to nOutputPlane" );
 #endif
 
-  luaL_error(L, "not implemented");
+  THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
+  THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
+
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
+
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
+
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+  assert(overlap==1);
+
+  int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+  THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  THTensor *revk;
+  THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
+
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  assert(ip==weight->size[3]);
+
+
+   assert(gradOutput->nDimension == 4)
+   assert(bs == gradOutput->size[0])
+   /* check that output h,w sizes match gradOutput sizes      */
+   int goh = gradOutput->size[1];
+   int gow = gradOutput->size[2];
+   assert(goh == (ih + padtop + padbottom - kh) / stridey + 1) ;
+   assert(gow == (iw + padleft + padright - kw) / stridex + 1) ;
+   assert(op == gradOutput->size[3]);
+
+
+
+   /* copyKernelReverse */
+   int ko = weight->size[1];
+   int ki = weight->size[3];
+   
+   int kouth=(kh+stridey-1)/stridey;
+   int kouto=ki;
+   int koutw=(kw+stridex-1)/stridex;
+   int kouti=ko;
+
+   /* clean this after... */
+   int revkh=kouth;
+   int revkw=koutw;
+
+   THLongStorage *revksize = THLongStorage_newWithSize(6);
+   revksize->data[0]=stridey;
+   revksize->data[1]=stridex;
+   revksize->data[2]=kouth;
+   revksize->data[3]=kouto;
+   revksize->data[4]=koutw;
+   revksize->data[5]=kouti;
+
+   revk = THTensor_(newWithSize)(revksize, NULL);
+   THTensor_(fill)(revk, 0);
+   
+   real* koptr = THTensor_(data)(revk);
+   real* kp    = THTensor_(data)(weight);
+   
+   int i=0;
+   
+   int stry;
+   for (stry=0; stry<stridey; stry++) {
+		int strx;
+		for (strx=0; strx<stridex; strx++) {
+			int ith;
+			for (ith=0; ith<kouth; ith++) {
+				int ycoord=kh-((ith)*stridey+stry-1);
+				if (ycoord<kh && ycoord>-1) {
+					int ito;
+					for (ito=0; ito<kouto; ito++ ) {
+						int itw;
+                  		for (itw=0; itw<koutw; itw++ ) {
+							int xcoord=kw-((itw)*stridex+strx+1);
+							if (xcoord<kw && xcoord>-1) {
+					 			int iti;
+                        		for (iti=0; iti<kouti; iti++) {
+									koptr[i] = kp[(ycoord)*sh+(iti)*so+(xcoord)*sw+(ito)*si];
+									i=i+1;
+                        		}
+					 		}
+                     		else {
+                        		i = i + kouti;
+                     		}
+                  		}
+               		}
+				}
+            	else {
+               		i = i + kouti*koutw*kouto;
+            	}
+			}
+		}
+	}
+
+
+   /* end of copyKernelReverse */
+
+  
+   /* create gradinput tensor :*/
+   int giw = ( gow + revkw -1 ) * stridex
+   int gih = ( goh + revkh -1 ) 
+
+   THLongStorage *gradinsize = THLongStorage_newWithSize(5);
+   gradinsize->data[0]=stridey;
+   gradinsize->data[1]=bs;
+   gradinsize->data[2]=gih;
+   gradinsize->data[3]=giw;
+   gradinsize->data[4]=ip;
+
+   THTensor * gradin = THTensor_(newWithSize)(gradinsize, NULL);
+   THTensor_(fill)(gradin, 0);
+   
+   
+   /* pad gradoutput tensor :*/
+   int pgow = ( gow + revkw -1 )
+   int pgoh = ( goh + revkh -1 ) 
+
+   
+   /* here we take bs+1 to have some zero-padding at the end of the matrix */
+   /* it only costs some memory. GEMM does not use it. */
+
+   THLongStorage *gradoutsize = THLongStorage_newWithSize(4);
+   gradoutsize->data[0]=bs+1;
+   gradoutsize->data[1]=pgoh;
+   gradoutsize->data[2]=pgow;
+   gradoutsize->data[3]=op;
+
+   THTensor * gradOutCopy = THTensor_(newWithSize)(gradoutsize, NULL);
+   THTensor_(fill)(gradOutCopy, 0);
+
+
+
+   /*gradOutCopy = newSameTensor(gradOutput, bs+1, pgoh, pgow, op) 
+   tgocopy=narrowTensorAndZero(gradOutCopy, 1, 1, bs)
+   tgocopy=narrowTensorAndZero(tgocopy, 2, revkh, goh)
+   tgocopy=narrowTensorAndZero(tgocopy, 3, revkw, gow)
+   tgocopy:copy(gradOutput)*/
+
+
+   real* goptr=THTensor_(data)(gradOutput);
+   real* gocpyptr=THTensor_(data)(gradOutCopy);
+
+   int itgocpy0=0;
+   int itgo=0;
+
+   int it1;
+   for (it1=0; it1<bs; it1++) {
+		int itgocpy1	=	itgocpy0+(it1)*pgoh*pgow*op;
+		int it2;
+	    for (it2=0; it2<goh; it2++) { 
+			int itgocpy2=itgocpy1+(revkh-1+it2)*pgow*op;
+			int it3;
+			for (it3=0; it3<gow; it3++ ) {
+				int itgocpy3=itgocpy2+(revkw-1+it3)*op;
+				int it4;
+				for (it4=0; it4<op; it4++) {
+					gocpyptr[itgocpy3]=goptr[itgo];
+					itgocpy3++;
+					itgo++;
+				}
+			}
+		}
+	} 
+
+
+
+   /* GEMM calls : */
+	int stry;
+	for (stry=0; stry<stridey; stry++) {
+		int strx;
+		for (strx=0; strx<stridex; strx++) {
+			int vcall;
+			for (vcall=0; vcall<revkh; vcall++) {
+                /*gradoutptr = torch.data(gradOutCopy[{1, revkh-vcall, 1, {}}])*/
+
+				real* gradoutptr = THTensor_(data)(gradOutCopy);
+				gradoutptr		+= (revkh-vcall-1)*gradOutCopy->stride[1];
+                int ldgradout    = op;
+                  
+                /*krevptr    = torch.data(revk[{stry,strx,revkh-vcall,{},{},{}}])*/
+				real* krevptr	 = THTensor_(data)(revk);
+				krevptr 		+= (stry)*revk->stride[0] + (strx)*revk->stride[1] + (revkh-vcall-1)*revk->stride[2];
+                int szkrev       = op*revkw;
+                int ldkrev     	 = op*revkw;
+                  
+                /*gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-(strx-1), {}}])*/
+				real* gradinptr	 = THTensor_(data)(gradin);
+				gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1)*gradin->stride[3];
+                int ldgradin   	 = ip * stridex;
+               
+                int nspots     = giw/stridex*gih*bs;
+               
+                THBlas_(gemm)('T', 'N', ip, nspots, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin);           
+			}
+		}
+	}
+
+
+
+  /* correct padright and padbottom */
+  int oldpadright = padright;
+  int oldpadbottom = padbottom;
+  padright = gow * stridex + kw - stridex - iw - padleft;
+  padbottom = goh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
+
+  /* input size with padding */
+  int piw = padleft + iw + padright; 
+  int pih = padtop + ih + padbottom;
+
+
+
+
+
+/*    
+   throwawayx=stridex - math.mod(kw,stridex)
+   throwawayy=stridey - math.mod(kh,stridey)
+   if stridex==1 then throwawayx=0 end
+   if stridey==1 then throwawayy=0 end
+   if throwawayx==stridex then throwawayx=0 end
+   if throwawayy==stridey then throwawayy=0 end
+   
+
+   resw=piw
+   resh=pih
+   result = newSameTensor(gradOutput, bs, resh, resw, ip):fill(0)
+   
+
+   for stry=stridey,1,-1 do   
+      -- copy is tricky
+      -- first line should be thrown away if 
+      throwaway = stridey-stry < throwawayy
+      
+      tgicopy = gradin:select(1,stry)
+      tgicopy=tgicopy:narrow(3, 1+throwawayx, giw-throwawayx)
+      if throwaway then
+         tgicopy=tgicopy:narrow(2, 2, gih-1)
+      end
+      
+      
+      -- select proper area in result tensor ()
+      tresult = result:narrow(3,1, giw-throwawayx)
+      if throwaway then
+         tresult = tresult:narrow(2, (stridey-stry+1) - throwawayy + stridey, gih-1)
+      else
+         tresult = tresult:narrow(2, (stridey-stry+1) - throwawayy, gih)         
+      end      
+      
+      local tresultSizes = tresult:size()
+      local tresultStrides = tresult:stride()
+      tresultStrides[2] = tresultStrides[2] * stridey
+      tresult = tresult.new(tresult:storage(), tresult:storageOffset(), tresultSizes, tresultStrides)
+      tresult:copy(tgicopy)
+   end
+ 
+   result=result:narrow(2, padtop+1, ih):narrow(3, padleft+1, iw)
+   
+   return result
+
+*/
+
+
+
+
+
+
+
+
+
+
+  /*luaL_error(L, "not implemented");*/
   return 0;
 }
 
