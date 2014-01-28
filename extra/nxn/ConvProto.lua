@@ -1,11 +1,7 @@
 local ConvProto, parent = torch.class('nxn.ConvProto', 'nxn.Module')
 
 
---paths.dofile('Prototype-Of-Convolution.lua')
-
-
-
-function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padup, paddown, overlap)
+function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom, overlap)
    parent.__init(self)
 
    dW = dW or 1
@@ -19,12 +15,12 @@ function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, pa
    self.dH = dH
    self.padleft = padleft or 0
    self.padright = padright or 0
-   self.padtop = padup or 0
-   self.padbottom = paddown or 0
+   self.padtop = padtop or 0
+   self.padbottom = padbottom or 0
    self.overlap = overlap or 0
 
-   self.alpha=1
-   self.beta=0
+   self.alpha= alpha or 1
+   self.beta= beta or 0
 
    self.weight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane)
    self.bias = torch.Tensor(nOutputPlane)
@@ -55,16 +51,6 @@ function ConvProto:reset(stdv)
 end
 
 function ConvProto:updateOutput(input)
---   self.bias:zero()
---   parms={ padleft=self.padleft, 
---      padright=self.padright, 
---      padtop=self.padup, 
---      padbottom=self.paddown, 
---      stridex=self.dW, 
---      stridey=self.dH }
-   
---   SpatialConvolution(self.output, input, self.weight, parms)
-
    input.nxn.ConvProto_updateOutput(self, input)
    return self.output
 end
