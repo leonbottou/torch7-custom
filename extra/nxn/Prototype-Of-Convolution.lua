@@ -148,27 +148,74 @@ function SpatialConvolution(result, input, kernel, parms)
    
    -- copy image into input buffer
    local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip)
+   
+  
    for s=0,stridey-1 do
-      local ticopy = icopy:select(1,s+1)
       local fout = math.floor((math.max(0,padtop-s)+stridey-1)/stridey)
       local fin = fout * stridey - padtop + s
       assert(fout >= 0 and fin >= 0)
+      local icopyptr=torch.data(icopy)
+      local inputptr=torch.data(input)
       if fin < ih then
-         local tinput = input:narrow(2,fin+1,ih-fin)
-         local tinputSizes = tinput:size()
-         local tinputStrides = tinput:stride()
-         tinputStrides[2] = tinputStrides[2] * stridey
-         tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
-         tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
-         ticopy = narrowTensorAndZero(ticopy, 2, fout+1, tinput:size(2))
-         ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
-         ticopy:copy(tinput)
+         --inputstride2 = (input:stride())[2]*stridey
+         local inputsize2   = math.floor(((ih-fin) + stridey - 1) / stridey)
+         local iticopy0=s*bs*toh*tiw*ip
+         local itinput0=0
+         for it1=1,bs do
+            local iticopy1=iticopy0+(it1-1)*toh*tiw*ip
+            local itinput1=itinput0+(it1-1)*ih*iw*ip
+            
+            for it2=1, inputsize2 do
+               local iticopy2=iticopy1+(fout+it2-1)*tiw*ip
+               local itinput2=itinput1+((fin+1)+(it2-1)*stridey-1)*iw*ip
+               
+               for it3=1,input:size(3) do
+                  local iticopy3=iticopy2+(padleft+it3-1)*ip
+                  local itinput3=itinput2+(it3-1)*ip
+                  
+                  for it4=1,ip do
+                     --icopy[{s+1, it1, fout+it2, padleft+it3, it4}]=input[{it1, (fin+1) + (it2-1)*stridey, it3, it4}]
+                     --icopyptr[iticopy3]=input[{it1, (fin+1) + (it2-1)*stridey, it3, it4}]
+                     icopyptr[iticopy3]=inputptr[itinput3]
+                     iticopy3=iticopy3+1
+                     itinput3=itinput3+1
+                  end
+               end
+            end
+         end
       else
-         ticopy:zero()
+         
+         for it=bs*toh*tiw*ip*s, bs*toh*tiw*ip*(s+1)-1 do
+            icopyptr[it]=0
+         end
+      end
+   end
+   --print('copy time : '..z:time().real)
+   
+   
+   -- let's keep that here so we know what we're doing above...
+   if false then   
+      for s=0,stridey-1 do
+         local ticopy = icopy:select(1,s+1)
+         local fout = math.floor((math.max(0,padtop-s)+stridey-1)/stridey)
+         local fin = fout * stridey - padtop + s
+         assert(fout >= 0 and fin >= 0)
+         if fin < ih then
+            local tinput = input:narrow(2,fin+1,ih-fin)
+            local tinputSizes = tinput:size()
+            local tinputStrides = tinput:stride()
+            tinputStrides[2] = tinputStrides[2] * stridey
+            tinputSizes[2] = math.floor((tinputSizes[2] + stridey - 1) / stridey)
+            tinput = tinput.new(tinput:storage(), tinput:storageOffset(), tinputSizes, tinputStrides)
+            ticopy = narrowTensorAndZero(ticopy, 2, fout+1, tinput:size(2))
+            ticopy = narrowTensorAndZero(ticopy, 3, padleft+1, tinput:size(3))
+            ticopy:copy(tinput)
+         else
+            ticopy:zero()
+         end
       end
    end
    
-   --print(icopy)
    -- copy kernel into kernel buffer
    local kcopy = copySpatialConvolutionKernel(kernel,reverse)
    
@@ -181,6 +228,7 @@ function SpatialConvolution(result, input, kernel, parms)
       for vcall = 0,kh-1 do
          local sq = math.floor(vcall / stridey)
          local sr = vcall - sq * stridey
+--   local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip)
          local iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}])
          local kptr = torch.data(kcopy:select(1,vcall+1))
          local optr = torch.data(ocopy:select(3,hcall+1))
@@ -213,25 +261,25 @@ local function copySpatialConvolutionKernelReverse(kernel, stridex, stridey)
    local ki,si = kernel:size(4), kernel:stride(4)
    local kp = torch.data(kernel)
    
-   kouth=math.floor((kh+stridey-1)/stridey)
-   kouto=ki
-   koutw=math.floor((kw+stridex-1)/stridex)
-   kouti=ko
+   local kouth=math.floor((kh+stridey-1)/stridey)
+   local kouto=ki
+   local koutw=math.floor((kw+stridex-1)/stridex)
+   local kouti=ko
    
-   kout = newSameTensor(kernel, stridey, stridex, kouth, kouto, koutw, kouti)
+   local kout = newSameTensor(kernel, stridey, stridex, kouth, kouto, koutw, kouti)
    kout:zero()
-   koptr = torch.data(kout)
+   local koptr = torch.data(kout)
    
-   i=0
+   local i=0
    
    for stry=1,stridey do
       for strx=1,stridex do
          for ith=1, kouth do
-            ycoord=kh+1-((ith-1)*stridey+1+stry-1)
+            local ycoord=kh+1-((ith-1)*stridey+1+stry-1)
             if ycoord<kh+1 and ycoord>0 then
                for ito=1, kouto do
                   for itw=1, koutw do
-                     xcoord=kw+1-((itw-1)*stridex+1+strx-1)
+                     local xcoord=kw+1-((itw-1)*stridex+1+strx-1)
                      if xcoord<kw+1 and xcoord>0 then
                         for iti=1, kouti do
                            --kout[{stry, strx, ith, ito, itw, iti}] = kernel[{ycoord, iti, xcoord, ito}]
@@ -424,7 +472,7 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
  
    result=result:narrow(2, padtop+1, ih):narrow(3, padleft+1, iw)
    
-
+   return result
    
 end
 

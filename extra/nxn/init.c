@@ -11,6 +11,9 @@
 #include "generic/SpatialConvolution.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/ConvProto.c"
+#include "THGenerateFloatTypes.h"
+
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libnxn(lua_State *L);
 
@@ -25,6 +28,9 @@ int luaopen_libnxn(lua_State *L)
 
   nxn_FloatSpatialConvolution_init(L);
   nxn_DoubleSpatialConvolution_init(L);
+
+  nxn_FloatConvProto_init(L);
+  nxn_DoubleConvProto_init(L);
 
   return 1;
 }
