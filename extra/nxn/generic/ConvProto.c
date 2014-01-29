@@ -261,7 +261,7 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
   THTensor *revk;
-  THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
+  THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
 
 
   int bs = input->size[0];
@@ -315,21 +315,22 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
    
    int i=0;
    
-   int stry;
+   int stry, strx, ith, ycoord, ito, itw, xcoord, iti;
+
+   int sh=weight->stride[0];
+   int so=weight->stride[1];
+   int sw=weight->stride[2];
+   int si=weight->stride[3];
+
    for (stry=0; stry<stridey; stry++) {
-		int strx;
 		for (strx=0; strx<stridex; strx++) {
-			int ith;
 			for (ith=0; ith<kouth; ith++) {
-				int ycoord=kh-((ith)*stridey+stry-1);
+				ycoord=kh-((ith)*stridey+stry+1);
 				if (ycoord<kh && ycoord>-1) {
-					int ito;
 					for (ito=0; ito<kouto; ito++ ) {
-						int itw;
                   		for (itw=0; itw<koutw; itw++ ) {
-							int xcoord=kw-((itw)*stridex+strx+1);
+							xcoord=kw-((itw)*stridex+strx+1);
 							if (xcoord<kw && xcoord>-1) {
-					 			int iti;
                         		for (iti=0; iti<kouti; iti++) {
 									koptr[i] = kp[(ycoord)*sh+(iti)*so+(xcoord)*sw+(ito)*si];
 									i=i+1;
@@ -353,8 +354,8 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
 
   
    /* create gradinput tensor :*/
-   int giw = ( gow + revkw -1 ) * stridex
-   int gih = ( goh + revkh -1 ) 
+   int giw = ( gow + revkw -1 ) * stridex;
+   int gih = ( goh + revkh -1 ) ;
 
    THLongStorage *gradinsize = THLongStorage_newWithSize(5);
    gradinsize->data[0]=stridey;
@@ -368,8 +369,8 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
    
    
    /* pad gradoutput tensor :*/
-   int pgow = ( gow + revkw -1 )
-   int pgoh = ( goh + revkh -1 ) 
+   int pgow = ( gow + revkw -1 );
+   int pgoh = ( goh + revkh -1 );
 
    
    /* here we take bs+1 to have some zero-padding at the end of the matrix */
@@ -399,16 +400,13 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
    int itgocpy0=0;
    int itgo=0;
 
-   int it1;
+   int it1, it2, it3, it4;
    for (it1=0; it1<bs; it1++) {
 		int itgocpy1	=	itgocpy0+(it1)*pgoh*pgow*op;
-		int it2;
 	    for (it2=0; it2<goh; it2++) { 
 			int itgocpy2=itgocpy1+(revkh-1+it2)*pgow*op;
-			int it3;
 			for (it3=0; it3<gow; it3++ ) {
 				int itgocpy3=itgocpy2+(revkw-1+it3)*op;
-				int it4;
 				for (it4=0; it4<op; it4++) {
 					gocpyptr[itgocpy3]=goptr[itgo];
 					itgocpy3++;
@@ -421,7 +419,7 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
 
 
    /* GEMM calls : */
-	int stry;
+	/*int stry;*/
 	for (stry=0; stry<stridey; stry++) {
 		int strx;
 		for (strx=0; strx<stridex; strx++) {
@@ -469,32 +467,102 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
 
 
 
+    
+   int throwawayx=stridex - kw%stridex;
+   int throwawayy=stridey - kh%stridey;
+   if (stridex==1 || stridex==throwawayx) { throwawayx=0 ; } 
+   if (stridey==1 || stridey==throwawayy) { throwawayy=0 ; }
+
+   /* clean this after */ 
+   int resw=piw;
+   int resh=pih;
+
+   THTensor * result = THTensor_(newWithSize4d)(bs, resh, resw, ip);
+   THTensor_(fill)(result, 0);
 
 
-/*    
-   throwawayx=stridex - math.mod(kw,stridex)
-   throwawayy=stridey - math.mod(kh,stridey)
-   if stridex==1 then throwawayx=0 end
-   if stridey==1 then throwawayy=0 end
-   if throwawayx==stridex then throwawayx=0 end
-   if throwawayy==stridey then throwawayy=0 end
+   int itres0 = 0;
+   int itgi0  = 0;
+   int starty, sizey;
+
+   real* gradinptr = THTensor_(data)(gradin);
+   real* resptr = THTensor_(data)(result);
+
+   for(stry=stridey; stry>0; stry--) {
+   	int throwaway = stridey-stry < throwawayy;
+	if(throwaway) {
+		starty = (stridey-stry+1) - throwawayy + stridey -1 ;
+		sizey  = gih-1;
+ 	}
+	else 	{ 
+		starty = (stridey-stry+1) - throwawayy -1 ;
+		sizey  = gih;
+	}
+
+	itgi0 = (stry-1)*gradin->stride[0];
+	
+   for (it1=0; it1<bs; it1++) {
+		int itres1 = itres0 + it1*result->stride[0];
+		int itgi1  = itgi0  + it1*gradin->stride[1];
+		for (it2=0; it2<sizey; it2++) { 
+			int itres2 = itres1 + (starty + it2*stridey)*result->stride[1];
+			int itgi2  = itgi1 + it2*gradin->stride[2];
+			if(throwaway) {itgi2 += gradin->stride[2];}
+			for (it3=0; it3<giw-throwawayx; it3++ ) {
+				int itres3 = itres2 + it3*result->stride[2];
+				int itgi3  = itgi2 + (throwawayx+it3)*gradin->stride[3];
+				for (it4=0; it4<ip; it4++) {
+					resptr[itres3]= gradinptr[itgi3];
+					itres3++;
+					itgi3++;
+				}
+			}
+		}
+	} 
+
+
+}
+
+THTensor_(resizeAs)(gradInput, input);
+/*THTensor_(copy)(gradInput, result);*/
+
+   real* gradinputptr = THTensor_(data)(gradInput);
+
+   itgi0=0;
+   itres0=0;
+   for (it1=0; it1<bs; it1++) {
+		int itres1 = itres0 + it1*result->stride[0];
+		int itgi1  = itgi0  + it1*gradInput->stride[0];
+		for (it2=0; it2<ih; it2++) { 
+			int itres2 = itres1 + (padtop + it2)*result->stride[1];
+			int itgi2  = itgi1 + it2*gradInput->stride[1];
+			for (it3=0; it3<iw; it3++ ) {
+				int itres3 = itres2 + (padleft+it3)*result->stride[2];
+				int itgi3  = itgi2 + it3*gradInput->stride[2];
+				for (it4=0; it4<ip; it4++) {
+					gradinputptr[itgi3]= resptr[itres3];
+					itres3++;
+					itgi3++;
+				}
+			}
+		}
+	} 
+
+
+
+
    
-
-   resw=piw
-   resh=pih
-   result = newSameTensor(gradOutput, bs, resh, resw, ip):fill(0)
-   
-
+/*
    for stry=stridey,1,-1 do   
-      -- copy is tricky
-      -- first line should be thrown away if 
+       copy is tricky
+      first line should be thrown away if 
       throwaway = stridey-stry < throwawayy
       
       tgicopy = gradin:select(1,stry)
-      tgicopy=tgicopy:narrow(3, 1+throwawayx, giw-throwawayx)
       if throwaway then
          tgicopy=tgicopy:narrow(2, 2, gih-1)
       end
+      tgicopy=tgicopy:narrow(3, 1+throwawayx, giw-throwawayx)
       
       
       -- select proper area in result tensor ()
@@ -567,3 +635,4 @@ static void nxn_(ConvProto_init)(lua_State *L)
 }
 
 #endif
+
