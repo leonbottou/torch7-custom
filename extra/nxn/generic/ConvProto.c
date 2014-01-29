@@ -106,6 +106,7 @@ static int nxn_(ConvProto_updateOutput)(lua_State *L)
   icopysize->data[3]=tiw;
   icopysize->data[4]=ip;
   THTensor* icopy = THTensor_(newWithSize)(icopysize, NULL);
+  THTensor_(fill)(icopy, 0);
 
 int s;
    for (s=0; s<stridey; s++) {
@@ -195,6 +196,8 @@ int it1;
   real* ocpyptr = THTensor_(data)(ocopy);
   real* optr = THTensor_(data)(output);
   real* bptr = THTensor_(data)(bias);
+
+  THTensor_(fill)(output, 0);
 
   /* here we take alpha = 1 and beta = 0 */
 	int itout0=0;
