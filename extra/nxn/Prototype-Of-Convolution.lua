@@ -388,6 +388,7 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    
    
    --GEMM call :
+   local nxs=revkw
    for stry=1,stridey do
       for strx=1,stridex do
          for vcall=1,revkh do
@@ -410,6 +411,28 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
       end
    end
    
+   if false then
+      if not overlap then
+         nxs = math.floor((kw + stridex - 1) / stridex)
+      end
+      
+      -- call GEMM
+      for hcall =0,nxs-1 do
+         for vcall = 0,kh-1 do
+            local sq = math.floor(vcall / stridey)
+            local sr = vcall - sq * stridey
+            --   local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip)
+            local iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}])
+            local kptr = torch.data(kcopy:select(1,vcall+1))
+            local optr = torch.data(ocopy:select(3,hcall+1))
+            local nrun = (bs-1)*toh*tow + oh*tow
+            local ngem = math.floor((nrun - hcall) / nxs)
+            GEMM(type,'T','N', op, ngem, kw*ip, 
+                 1, kptr, kw*ip, iptr, nxs*stridex*ip,
+                 1, optr, nxs*op ) 
+         end
+      end
+   end
    
    -- correct padright and padbottom
    local oldpadright = padright

@@ -1,5 +1,5 @@
 #include <cublas_v2.h>
-#include "cusparse_v2.h"
+//#include "cusparse_v2.h"
 
 static int cunxn_testSgemm_run(lua_State *L)
 {
@@ -66,7 +66,7 @@ err = cublasDestroy(handle);
   return 1;
 }
 
-
+#if 0
 static int cunxn_testSgemm_cusparserun(lua_State *L)
 {
 
@@ -185,11 +185,11 @@ static int cunxn_testSgemm_cusparserun(lua_State *L)
   }
 return 0;
 }
-
+#endif
 
 static const struct luaL_Reg cunxn_testSgemm__ [] = {
   {"testSgemm_run", cunxn_testSgemm_run},
-  {"testSgemm_cusparserun", cunxn_testSgemm_cusparserun},
+//  {"testSgemm_cusparserun", cunxn_testSgemm_cusparserun},
   {NULL, NULL}
 };
 
