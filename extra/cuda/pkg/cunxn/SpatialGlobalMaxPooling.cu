@@ -19,6 +19,10 @@ __global__ void globalMaxPool(float *ptrinput, float *ptroutput, float *ptrindic
 
 	float out=-2e38;
 	int index=-1;
+	
+	ptrinput    += blockIdx.y * isize1*isize2*nPlanes;
+	ptroutput   += blockIdx.y * nPlanes;
+	ptrindices  += blockIdx.y * nPlanes;
 
 	// nPlanes better be a multiple of 32 for coalesced reads
 
@@ -43,17 +47,24 @@ __global__ void globalMaxPoolBackward(float *ptrgradinput, float *ptrgradoutput,
 	// this one can go full-speed : each block does a pixel
 	// but nPlanes should be a multiple of 32 if possible for coalesced writes
 
-	const int tidx = threadIdx.x;
-	const int blk  = blockDim.x;
 	const int pixidx = gridDim.x * blockIdx.y + blockIdx.x;
-	const int valuesperthread = (nPlanes + blk - 1) / blk;
 
 	int k;
 
-
 	// move pointers
-	ptrgradinput   += pixidx * nPlanes ;
-	for(k=0; k<valuesperthread; k++) {
+	ptrgradinput   += pixidx * nPlanes + blockIdx.z*isize1*isize2*nPlanes ;
+	ptrgradoutput  += blockIdx.z*nPlanes ;
+	ptrindices     += blockIdx.z*nPlanes ;
+
+	for(k=threadIdx.x; k<nPlanes; k+=blockDim.x) {
+			float index = ptrindices[k];
+			float gradoutvalue = ptrgradoutput[k];
+			float gradinvalue = pixidx==index ? gradoutvalue : 0;
+			ptrgradinput[k] = gradinvalue;
+
+	}	
+	
+/*	for(k=0; k<valuesperthread; k++) {
 		if(k*blk + tidx < nPlanes) {
 			float index = ptrindices[k*blk + tidx];
 			float gradoutvalue = ptrgradoutput[k*blk + tidx];
@@ -62,7 +73,7 @@ __global__ void globalMaxPoolBackward(float *ptrgradinput, float *ptrgradoutput,
 		}
 	}	
 	
-
+*/
 }
 
 
@@ -80,12 +91,13 @@ static int cunxn_SpatialGlobalMaxPooling_updateOutput(lua_State *L)
   input = THCudaTensor_newContiguous(input);
 
   // find the size of kernelslices
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long nPlanes = input->size[2];
+  long bs     = input->size[0];
+  long isize1 = input->size[1];
+  long isize2 = input->size[2];
+  long nPlanes = input->size[3];
 //  assert(nPlanes%32 == 0);
 
-  THCudaTensor_resize3d(output, 1, 1, nPlanes);
+  THCudaTensor_resize4d(output, bs, 1, 1, nPlanes);
   THCudaTensor_resizeAs(indices, output);
   
 
@@ -95,7 +107,7 @@ static int cunxn_SpatialGlobalMaxPooling_updateOutput(lua_State *L)
   
 
   // cuda blocks & threads:
-  dim3 blocks ((nPlanes + 31) / 32);
+  dim3 blocks ((nPlanes + 31) / 32, bs);
   dim3 threads (32);
 
   globalMaxPool <<<blocks, threads>>> (ptrinput, ptroutput, ptrindices, isize1, isize2, nPlanes);
@@ -128,20 +140,17 @@ static int cunxn_SpatialGlobalMaxPooling_updateGradInput(lua_State *L)
   THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
   THCudaTensor *indices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "indices", "torch.CudaTensor");
 
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long nPlanes = input->size[2];
-//  assert(nPlanes%32 == 0);
+  long bs     = input->size[0];
+  long isize1 = input->size[1];
+  long isize2 = input->size[2];
+  long nPlanes = input->size[3];
 
-  long outsize1 = gradOutput->size[0];
-  long outsize2 = gradOutput->size[1];
-
-  assert(outsize1 == 1);
-  assert(outsize2 == 1);
+  assert(gradOutput->size[1] == 1);
+  assert(gradOutput->size[2] == 1);
 
   THCudaTensor_resizeAs(gradInput, input);
 
-  dim3 blocks (isize1, isize2);
+  dim3 blocks (isize1, isize2, bs);
   dim3 threads (32);
 
   float* ptrindices  = THCudaTensor_data(indices);

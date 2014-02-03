@@ -14,6 +14,7 @@
 
 
 
+
 /********************************************/
 
 
@@ -242,8 +243,8 @@ static int cunxn_ConvProto_updateOutput(lua_State *L)
   int oh = ( ih + padtop + padbottom - kh ) / stridey + 1;
 
   /* correct padright and padbottom */
-  int oldpadright = padright;
-  int oldpadbottom = padbottom;
+//  int oldpadright = padright;
+//  int oldpadbottom = padbottom;
   padright = ow * stridex + kw - stridex - iw - padleft;
   padbottom = oh * stridey + kh - stridey - ih - padtop;
   /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */

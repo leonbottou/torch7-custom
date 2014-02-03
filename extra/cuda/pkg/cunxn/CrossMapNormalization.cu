@@ -23,7 +23,7 @@ template <int maxnumplanes> __global__ void CrossMapNormalization_output(float *
   const int valuesperthread = nPlanes/blockDim.x;
   
   // input offset:
-  const int offset = pixidx*nPlanes;
+  const int offset = pixidx*nPlanes + nPlanes*gridDim.x*gridDim.y*blockIdx.z;
 
   // move pointers
   input  += offset;
@@ -70,7 +70,7 @@ template <int maxnumplanes> __global__ void CrossMapNormalization_gradInput(floa
   const int valuesperthread = nPlanes/blockDim.x;
   
   // input offset:
-  const int offset = pixidx*nPlanes;
+  const int offset = pixidx*nPlanes + nPlanes*gridDim.x*gridDim.y*blockIdx.z;
 
   // move pointers
   input  	+= offset;
@@ -138,14 +138,15 @@ static int cunxn_CrossMapNormalization_updateOutput(lua_State *L)
   float *output_data = THCudaTensor_data(output);
   float *z_data = THCudaTensor_data(z);
 
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long nPlanes = input ->size[2];
+  long bs = input->size[0];
+  long isize1 = input->size[1];
+  long isize2 = input->size[2];
+  long nPlanes = input ->size[3];
 
   assert(nPlanes < 4097); // number of planes must be at most 4096 (or there will be shared memory issues...)
 
   // cuda blocks & threads:
-  dim3 blocks(isize1, isize2);
+  dim3 blocks(isize1, isize2, bs);
   dim3 threads(32);
 
   // kernel:
@@ -218,14 +219,15 @@ static int cunxn_CrossMapNormalization_updateGradInput(lua_State *L)
   float *z_data = THCudaTensor_data(z);
 
 
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long nPlanes = input->size[2];
+  long bs = input->size[0];
+  long isize1 = input->size[1];
+  long isize2 = input->size[2];
+  long nPlanes = input ->size[3];
 
   assert(nPlanes < 4097); // number of planes must be at most 4096 (or there will be shared memory issues...)
 
   // cuda blocks & threads:
-  dim3 blocks(isize1, isize2);
+  dim3 blocks(isize1, isize2,bs);
   dim3 threads(32);
   
   // kernel:

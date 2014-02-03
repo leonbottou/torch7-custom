@@ -21,3 +21,8 @@ function testSgemm:run(A,B,C)
    return C
 end
 
+function testSgemm:sparserun(output,coorow,coocol,cooval,w)
+   cooval.nxn.testSgemm_cusparserun(self,output,coorow,coocol,cooval,w)
+   return output
+end
+
