@@ -147,7 +147,7 @@ function SpatialConvolution(result, input, kernel, parms)
    assert(tih >= pih and pih >= ih)
    
    -- copy image into input buffer
-   local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip)
+   local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip):zero()
    
   
    for s=0,stridey-1 do
@@ -307,7 +307,6 @@ end
 
 
 
-
 function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    
    -- typecheck
@@ -387,26 +386,40 @@ function ReverseConvolution3(gradInput, gradOutput, input, kernel, parms)
    tgocopy:copy(gradOutput)
    
    
-   --GEMM call :
-   local nxs=revkw
-   for stry=1,stridey do
-      for strx=1,stridex do
-         for vcall=1,revkh do
---            for hcall=1,revkw do
-                gradoutptr = torch.data(gradOutCopy[{1, revkh-(vcall-1), 1, {}}])
-                ldgradout  = op --*revkw
-                  
-                krevptr    = torch.data(revk[{stry,strx,revkh-(vcall-1),{},{},{}}])
-                szkrev     = op*revkw
-                ldkrev     = op*revkw --*revkh
-                  
-                gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-strx+1, {}}])
-                ldgradin   = ip *stridex
+  --GEMM call :
+   nxs=1
+   if not overlap then
+      nxs=revkw
+      print('no overlap')
+   end
+   for hcall =0,nxs-1 do
+      for stry=1,stridey do
+         for strx=1,stridex do
+            for vcall=1,revkh do
+               --            for hcall=1,revkw do
+               --gradoutptr = torch.data(gradOutCopy[{1, revkh-(vcall-1), 1, {}}])
+               gradoutptr = torch.data(gradOutCopy[{1, revkh-(vcall-1), hcall+1, {}}])
+               ldgradout  = op *nxs
+               --ldgradout  = op --overlapping
                
-                nspots     = giw/stridex*gih*bs
+               krevptr    = torch.data(revk[{stry,strx,revkh-(vcall-1),{},{},{}}])
+               szkrev     = op*revkw
+               ldkrev     = op*revkw --*revkh 
+                  
+                  gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-strx+1+hcall*stridex, {}}])
+               --gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-strx+1, {}}]) --overlapping
                
-                GEMM(type, 'T', 'N', ip, nspots, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin)           
---            end    
+               ldgradin   = ip *stridex*nxs
+               --ldgradin   = ip *stridex --overlapping
+               
+               nspots     = giw/stridex*gih*bs
+               ngem       = math.ceil((nspots - hcall) / nxs) --overlapping
+               --print('overlap mode : off2')
+               
+               -- GEMM(type, 'T', 'N', ip, nspots, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin)  --overlapping           
+               GEMM(type, 'T', 'N', ip, ngem, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin)           
+                  --            end    
+            end
          end
       end
    end
