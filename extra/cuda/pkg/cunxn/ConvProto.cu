@@ -617,9 +617,24 @@ __global__ void kernelCopyReverse(float* weightptr, float* revkptr, int stridey,
 
 
 
+__global__ void copyGradOut(float* goptr, float* gocpyptr, int goh, int gow, int pgoh, int pgow, int revkh, int revkw, int op)
+{
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, goh-1 ] (it2)
+      blockIdx.x  = [ 0, gow-1 ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
 
+   gocpyptr += ((blockIdx.z*pgoh+(revkh -1 + blockIdx.y))*pgow+(revkw-1+blockIdx.x))*op;
+   goptr += ((blockIdx.z*goh+blockIdx.y)*gow+blockIdx.x)*op;
 
+   int i;
+   for(i=threadIdx.x; i<op; i+=blockDim.x)
+   {
+      gocpyptr[i]=goptr[i];
+   }
 
+}
 
 
 
@@ -711,7 +726,8 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    kernelCopyReverse <<<kcrblocks, kcrthreads>>>(weightptr, revkptr, stridey, stridex, kouth, 
       koutw, kouto, kouti, sh, so, sw, si, kh, kw, ko, ki);
    /*
-         blockIdx.z  =    [ 0, ceil(ki/32)] -> usually this should be good
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> parallelizing over inputplanes dimension : 
+            usually there will be lots of them except in data layer where there is no backprop
             inputplane = blockIdx.z * blockDim.x+threadIdx.x
          blockIdx.y  =    [ 0, stry-1    ]
          blockIdx.x  =    [ 0, strx-1    ]
@@ -724,16 +740,161 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    /* end of copyKernelReverse */
    
    
-   THCudaTensor_resizeAs(gradInput, revk);
-   THCudaTensor_copy(gradInput, revk);
+   
+   /* create gradinput tensor :*/
+   int giw = ( gow + revkw -1 ) * stridex;
+   int gih = ( goh + revkh -1 ) ;
+
+   THLongStorage *gradinsize = THLongStorage_newWithSize(5);
+   gradinsize->data[0]=stridey;
+   gradinsize->data[1]=bs;
+   gradinsize->data[2]=gih;
+   gradinsize->data[3]=giw;
+   gradinsize->data[4]=ip;
+
+   THCudaTensor * gradin = THCudaTensor_newWithSize(gradinsize, NULL);
+   THCudaTensor_fill(gradin, 0);
+   
+   
+   /* pad gradoutput tensor :*/
+   int pgow = ( gow + revkw -1 );
+   int pgoh = ( goh + revkh -1 );
+
+   
+   /* here we take bs+1 to have some zero-padding at the end of the matrix */
+   /* it only costs some memory. GEMM does not use it. */
+
+   THLongStorage *gradoutsize = THLongStorage_newWithSize(4);
+   gradoutsize->data[0]=bs+1;
+   gradoutsize->data[1]=pgoh;
+   gradoutsize->data[2]=pgow;
+   gradoutsize->data[3]=op;
+
+   THCudaTensor * gradOutCopy = THCudaTensor_newWithSize(gradoutsize, NULL);
+   THCudaTensor_fill(gradOutCopy, 0);
+
+   float* goptr=THCudaTensor_data(gradOutput);
+   float* gocpyptr=THCudaTensor_data(gradOutCopy);
+
+   /* Convert this to a CUDA kernel 
+   
+   // Lua :
+   gradOutCopy = newSameTensor(gradOutput, bs+1, pgoh, pgow, op) 
+   tgocopy=narrowTensorAndZero(gradOutCopy, 1, 1, bs)
+   tgocopy=narrowTensorAndZero(tgocopy, 2, revkh, goh)
+   tgocopy=narrowTensorAndZero(tgocopy, 3, revkw, gow)
+   tgocopy:copy(gradOutput)
+
+
+   // C :
+   real* goptr=THTensor_(data)(gradOutput);
+   real* gocpyptr=THTensor_(data)(gradOutCopy);
+
+   int itgocpy0=0;
+   int itgo=0;
+
+   int it1, it2, it3, it4;
+   for (it1=0; it1<bs; it1++) {
+		int itgocpy1	=	itgocpy0+(it1)*pgoh*pgow*op;
+	    for (it2=0; it2<goh; it2++) { 
+			int itgocpy2=itgocpy1+(revkh-1+it2)*pgow*op;
+			for (it3=0; it3<gow; it3++ ) {
+				int itgocpy3=itgocpy2+(revkw-1+it3)*op;
+				for (it4=0; it4<op; it4++) {
+					gocpyptr[itgocpy3]=goptr[itgo];
+					itgocpy3++;
+					itgo++;
+				}
+			}
+		}
+	} 
+
+   
+   */
+   
+   dim3 cgoblocks(gow, goh, bs);
+   dim3 cgothreads(32);
+   
+   copyGradOut <<< cgoblocks, cgothreads >>>(goptr, gocpyptr, goh, gow, pgoh, pgow, revkh, revkw, op);
+
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, goh-1 ] (it2)
+      blockIdx.x  = [ 0, gow-1 ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+   
+   /* end of copyGradOut */
+   
+   float onef=1;
+   
+  cublasHandle_t handle;
+  cublasStatus_t err = cublasCreate(&handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+   
+   /* GEMM calls : */
+	int nxs=1;
+	if(!overlap) {
+	   nxs=revkw; 
+	   //printf("no overlap");
+	}
+	for (int hcall=0; hcall<nxs; hcall++) {
+	   for (int stry=0; stry<stridey; stry++) {
+		   for (int strx=0; strx<stridex; strx++) {
+			   for (int vcall=0; vcall<revkh; vcall++) {
+				   float* gradoutptr  = THCudaTensor_data(gradOutCopy);
+				   gradoutptr		   += (revkh-vcall-1)*gradOutCopy->stride[1] + hcall*gradOutCopy->stride[2];
+               int ldgradout      = op*nxs;
+                     
+				   float* krevptr	    = THCudaTensor_data(revk);
+				   krevptr 		      += (stry)*revk->stride[0] + (strx)*revk->stride[1] + (revkh-vcall-1)*revk->stride[2];
+               int szkrev         = op*revkw;
+               int ldkrev     	 = op*revkw;
+                  
+				   float* gradinptr	 = THCudaTensor_data(gradin);
+				   gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1+hcall*stridex)*gradin->stride[3];
+               int ldgradin   	 = ip * stridex * nxs;
+                  
+               int nspots         = giw/stridex*gih*bs;
+               int ngem           = (nspots-hcall+nxs-1)/nxs;
+                  
+               err = cublasSgemm(handle,
+                           CUBLAS_OP_T, CUBLAS_OP_N,
+                           ip, ngem, szkrev,
+                           &onef,
+                           krevptr, ldkrev,
+                           gradoutptr, ldgradout,
+                           &onef,
+                           gradinptr, ldgradin );
+
+               if (err != CUBLAS_STATUS_SUCCESS) { printf("error in sgemm"); }
+               //else {printf("called sgemm..."); }
+			   }
+		   }
+	   }
+   }
+
+  err = cublasDestroy(handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   THCudaTensor_resizeAs(gradInput, gradin);
+   THCudaTensor_copy(gradInput, gradin);
    
    
       
 
   // check for errors
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    printf("error in ConvProto.updateOutput: %s\n", cudaGetErrorString(err));
+  cudaError_t err2 = cudaGetLastError();
+  if (err2 != cudaSuccess) {
+    printf("error in ConvProto.updateOutput: %s\n", cudaGetErrorString(err2));
     THError("aborting");
   }
 
