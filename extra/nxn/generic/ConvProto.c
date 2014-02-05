@@ -259,7 +259,7 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
   int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
-  assert(overlap==1);
+  //assert(overlap==1);
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
@@ -331,23 +331,23 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
 				ycoord=kh-((ith)*stridey+stry+1);
 				if (ycoord<kh && ycoord>-1) {
 					for (ito=0; ito<kouto; ito++ ) {
-                  		for (itw=0; itw<koutw; itw++ ) {
+            		for (itw=0; itw<koutw; itw++ ) {
 							xcoord=kw-((itw)*stridex+strx+1);
 							if (xcoord<kw && xcoord>-1) {
-                        		for (iti=0; iti<kouti; iti++) {
+                  		for (iti=0; iti<kouti; iti++) {
 									koptr[i] = kp[(ycoord)*sh+(iti)*so+(xcoord)*sw+(ito)*si];
 									i=i+1;
-                        		}
-					 		}
-                     		else {
-                        		i = i + kouti;
-                     		}
                   		}
+					 		}
+               		else {
+                  		i = i + kouti;
                		}
+            		}
+         		}
 				}
-            	else {
-               		i = i + kouti*koutw*kouto;
-            	}
+         	else {
+            		i = i + kouti*koutw*kouto;
+         	}
 			}
 		}
 	}
@@ -423,35 +423,45 @@ static int nxn_(ConvProto_updateGradInput)(lua_State *L)
 
    /* GEMM calls : */
 	/*int stry;*/
-	for (stry=0; stry<stridey; stry++) {
-		int strx;
-		for (strx=0; strx<stridex; strx++) {
-			int vcall;
-			for (vcall=0; vcall<revkh; vcall++) {
-                /*gradoutptr = torch.data(gradOutCopy[{1, revkh-vcall, 1, {}}])*/
+	int nxs=1;
+	if(!overlap) {nxs=revkw; printf("no overlap");}
+	int hcall;
+	for (hcall=0; hcall<nxs; hcall++) {
+	   for (stry=0; stry<stridey; stry++) {
+		   int strx;
+		   for (strx=0; strx<stridex; strx++) {
+			   int vcall;
+			   for (vcall=0; vcall<revkh; vcall++) {
+               /*gradoutptr = torch.data(gradOutCopy[{1, revkh-vcall, 1, {}}])*/
 
-				real* gradoutptr = THTensor_(data)(gradOutCopy);
-				gradoutptr		+= (revkh-vcall-1)*gradOutCopy->stride[1];
-                int ldgradout    = op;
+				   real* gradoutptr = THTensor_(data)(gradOutCopy);
+				   /*gradoutptr		+= (revkh-vcall-1)*gradOutCopy->stride[1];*/
+				   gradoutptr		+= (revkh-vcall-1)*gradOutCopy->stride[1] + hcall*gradOutCopy->stride[2];
+               /*int ldgradout    = op;*/
+               int ldgradout    = op*nxs;
+                     
+               /*krevptr    = torch.data(revk[{stry,strx,revkh-vcall,{},{},{}}])*/
+				   real* krevptr	 = THTensor_(data)(revk);
+				   krevptr 		+= (stry)*revk->stride[0] + (strx)*revk->stride[1] + (revkh-vcall-1)*revk->stride[2];
+               int szkrev       = op*revkw;
+               int ldkrev     	 = op*revkw;
                   
-                /*krevptr    = torch.data(revk[{stry,strx,revkh-vcall,{},{},{}}])*/
-				real* krevptr	 = THTensor_(data)(revk);
-				krevptr 		+= (stry)*revk->stride[0] + (strx)*revk->stride[1] + (revkh-vcall-1)*revk->stride[2];
-                int szkrev       = op*revkw;
-                int ldkrev     	 = op*revkw;
+               /*gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-(strx-1), {}}])*/
+				   real* gradinptr	 = THTensor_(data)(gradin);
+				   /*gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1)*gradin->stride[3];*/
+				   gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1+hcall*stridex)*gradin->stride[3];
+               /*int ldgradin   	 = ip * stridex;*/
+               int ldgradin   	 = ip * stridex * nxs;
                   
-                /*gradinptr  = torch.data(gradin[{stry, 1, 1, stridex-(strx-1), {}}])*/
-				real* gradinptr	 = THTensor_(data)(gradin);
-				gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1)*gradin->stride[3];
-                int ldgradin   	 = ip * stridex;
-               
-                int nspots     = giw/stridex*gih*bs;
-               
-                THBlas_(gemm)('T', 'N', ip, nspots, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin);           
-			}
-		}
-	}
-
+               int nspots     = giw/stridex*gih*bs;
+               int ngem       = (nspots-hcall+nxs-1)/nxs;
+                  
+               /*THBlas_(gemm)('T', 'N', ip, nspots, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin);*/
+               THBlas_(gemm)('T', 'N', ip, ngem, szkrev, 1, krevptr, ldkrev, gradoutptr, ldgradout, 1, gradinptr, ldgradin);           
+			   }
+		   }
+	   }
+   }
 
 
   /* correct padright and padbottom */

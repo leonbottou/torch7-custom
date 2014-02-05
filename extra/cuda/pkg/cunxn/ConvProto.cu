@@ -380,7 +380,6 @@ int s;
   cublasStatus_t err = cublasCreate(&handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
 
-
    /* call GEMM */
 	int hcall;
    for (hcall=0; hcall<nxs; hcall++) {
@@ -410,7 +409,6 @@ int s;
          /*THBlas_(gemm)('T','N', op, ngem, kw*ip, 
               1, kptr, kw*ip, iptr, nxs*stridex*ip,
               1, optr, nxs*op ); */
-              
          err = cublasSgemm(handle,
                            CUBLAS_OP_T, CUBLAS_OP_N,
                            op, ngem, kw*ip,
@@ -426,6 +424,7 @@ int s;
          //else {printf("called sgemm..."); }
       }
    }
+
 
   err = cublasDestroy(handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
@@ -537,14 +536,199 @@ int s;
 
 
 
+__global__ void kernelCopyReverse(float* weightptr, float* revkptr, int stridey, int stridex, int kouth, 
+      int koutw, int kouto, int kouti, int sh, int so, int sw, int si, int kh, int kw, int ko, int ki)
+{
+   /*
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> usually this should be good
+            inputplane = blockIdx.z * blockDim.x+threadIdx.x
+         blockIdx.y  =    [ 0, stry-1    ]
+         blockIdx.x  =    [ 0, strx-1    ]
+         threadIdx.x =    [ 0, 31        ] -> weight input dim
+         threadIdx.y =    [ 0, 31        ] -> weight output dim
+            outputplane= iterator * blockDim.y + threadIdx.y
+   */
+   const int stry=blockIdx.y;
+   const int strx=blockIdx.x;
+
+   // put revkptr on proper stry,strx submatrix
+   revkptr  +=    (blockIdx.y*stridex + blockIdx.x)*kouth*kouto*koutw*kouti;
+
+   
+   __shared__ float weightvalues[32][33];
+   // for given x,y : weightvalues[inputplane][outputplane]
+   
+   
+   int ith, itw, xcoord, ycoord, ito;
+   for(ith=0; ith<kouth; ith++) {
+      ycoord=kh-(ith*stridey+stry+1);
+      if (ycoord<kh && ycoord>-1) {
+         for(itw=0; itw<koutw; itw++) {
+	   	   xcoord=kw-(itw*stridex+strx+1);
+				if (xcoord<kw && xcoord>-1) {         
+
+/*              int kh = weight->size[0];
+              int op = weight->size[1];
+              int kw = weight->size[2];
+              assert(ip==weight->size[3]);            */
+         
+         for (ito=0; ito<(ko+blockDim.y-1)/blockDim.y; ito++) {
+
+         /* iterate over tiles of size 32*32 */
+
+         /* Step 1 : for a given (x,y)
+            read weight(y, [32o], x, [32i]) and store the stuff in shmem */
+
+                  const int curoplane=ito*blockDim.y+threadIdx.y;
+                  const int curiplane=blockIdx.z * blockDim.x+threadIdx.x;
+                  
+                  if(curiplane<ki && curoplane<ko) {
+                     weightvalues[threadIdx.x][threadIdx.y]=weightptr[ycoord*sh+xcoord*sw+(curoplane)*so+(curiplane)*si];
+                  }
+                  
+                  __syncthreads();
+
+         /* Step 2 : write revk(ith, [32i], itw, [32o]) in submatrix */
+                  
+                  const int reviplane=blockIdx.z * blockDim.y + threadIdx.y;
+                  const int revoplane=ito*blockDim.x+threadIdx.x;
+                  
+                  if( reviplane < ki && revoplane < ko) {
+                     revkptr[ith*kouto*koutw*kouti + itw*kouti + reviplane*koutw*kouti + revoplane] = weightvalues[threadIdx.y][threadIdx.x];
+                  }
+
+                  __syncthreads();
+
+         }
+         
+         
+   
+         
+         }
+         }
+      }
+   }
+   
+
+
+   
+}
+      
+
+
+
+
+
+
+
+
+
+
 static int cunxn_ConvProto_updateGradInput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
-  THCudaTensor *z = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "z", "torch.CudaTensor");
+  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
 //  int dimension  = luaT_getfieldcheckint(L, 1, "dimension")-1;
   THCudaTensor *gradInput  = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+  THCudaTensor *revk;
 
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
+
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
+
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+  //assert(overlap==1);
+
+  int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  assert(ip==weight->size[3]);
+
+
+   assert(gradOutput->nDimension == 4);
+   assert(bs == gradOutput->size[0]);
+   /* check that output h,w sizes match gradOutput sizes      */
+   int goh = gradOutput->size[1];
+   int gow = gradOutput->size[2];
+   assert(goh == (ih + padtop + padbottom - kh) / stridey + 1) ;
+   assert(gow == (iw + padleft + padright - kw) / stridex + 1) ;
+   assert(op == gradOutput->size[3]);
+
+
+
+   /*copyKernelReverse*/
+
+
+   int ko = weight->size[1];
+   int ki = weight->size[3];
+   
+   int sh = weight->stride[0];
+   int so = weight->stride[1];
+   int sw = weight->stride[2];
+   int si = weight->stride[3];
+   
+   
+   
+   int kouth=(kh+stridey-1)/stridey;
+   int kouto=ki;
+   int koutw=(kw+stridex-1)/stridex;
+   int kouti=ko;
+
+   /* clean this after... */
+   int revkh=kouth;
+   int revkw=koutw;
+
+   THLongStorage *revksize = THLongStorage_newWithSize(6);
+   revksize->data[0]=stridey;
+   revksize->data[1]=stridex;
+   revksize->data[2]=kouth;
+   revksize->data[3]=kouto;
+   revksize->data[4]=koutw;
+   revksize->data[5]=kouti;
+
+   revk = THCudaTensor_newWithSize(revksize, NULL);
+   THCudaTensor_fill(revk, 0);
+   
+   float* weightptr=THCudaTensor_data(weight);
+   float* revkptr=THCudaTensor_data(revk);
+   
+   dim3 kcrblocks(stridex, stridey, (ki+31)/32);
+   dim3 kcrthreads(32,32);
+   
+   
+   kernelCopyReverse <<<kcrblocks, kcrthreads>>>(weightptr, revkptr, stridey, stridex, kouth, 
+      koutw, kouto, kouti, sh, so, sw, si, kh, kw, ko, ki);
+   /*
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> usually this should be good
+            inputplane = blockIdx.z * blockDim.x+threadIdx.x
+         blockIdx.y  =    [ 0, stry-1    ]
+         blockIdx.x  =    [ 0, strx-1    ]
+         threadIdx.x =    [ 0, 31        ] -> weight input dim
+         threadIdx.y =    [ 0, 31        ] -> weight output dim
+            outputplane= iterator * blockDim.y + threadIdx.y
+   */
+   
+   
+   /* end of copyKernelReverse */
+   
+   
+   THCudaTensor_resizeAs(gradInput, revk);
+   THCudaTensor_copy(gradInput, revk);
+   
+   
+      
 
   // check for errors
   cudaError_t err = cudaGetLastError();
