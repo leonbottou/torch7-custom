@@ -941,8 +941,8 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    
    
      /* correct padright and padbottom */
-  int oldpadright = padright;
-  int oldpadbottom = padbottom;
+  //int oldpadright = padright;
+  //int oldpadbottom = padbottom;
   padright = gow * stridex + kw - stridex - iw - padleft;
   padbottom = goh * stridey + kh - stridey - ih - padtop;
   /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
@@ -951,8 +951,8 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
   if (padbottom < 0) { padbottom = 0;}
 
   /* input size with padding */
-  int piw = padleft + iw + padright; 
-  int pih = padtop + ih + padbottom;
+  //int piw = padleft + iw + padright; 
+  //int pih = padtop + ih + padbottom;
 
 
 
@@ -970,14 +970,14 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    THCudaTensor_fill(result, 0);
 
 
-   int itres0 = 0;
-   int itgi0  = 0;
-   int starty, sizey;
-
    float* gradinptr = THCudaTensor_data(gradin);
    float* resptr = THCudaTensor_data(result);
 
    /* Convert this to a CUDA kernel 
+   int itres0 = 0;
+   int itgi0  = 0;
+   int starty, sizey;
+
       for(stry=stridey; stry>0; stry--) {
       	int throwaway = stridey-stry < throwawayy;
 	      if(throwaway) {
@@ -1023,7 +1023,7 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    int rs0 = result->stride[0];
    int rs1 = result->stride[1];
    int rs2 = result->stride[2];
-   int gs0 = gradin->stride[0];
+   int gs0 = gradin->stride[0]; 
    int gs1 = gradin->stride[1];
    int gs2 = gradin->stride[2];
    int gs3 = gradin->stride[3];
@@ -1063,7 +1063,9 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
 
    
    
-   
+   THCudaTensor_free(gradin);
+   THCudaTensor_free(revk);
+   THCudaTensor_free(gradOutCopy);
    
    
    
