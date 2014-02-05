@@ -639,6 +639,56 @@ __global__ void copyGradOut(float* goptr, float* gocpyptr, int goh, int gow, int
 
 
 
+
+
+__global__ void copyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih)
+{
+   /*
+      blockIdx.z  = [ 0, bs-1 ] (it1)
+      blockIdx.y  = [ 0 ] 
+      blockIdx.x  = [ 0, giw - throwawayx -1 ] (it3)
+      threadIdx.x = [ 0, 31   ] (it4)
+   */
+
+   int starty, sizey;
+   
+   resptr   += blockIdx.z*rs0 + blockIdx.x*rs2;
+   gradinptr+= blockIdx.z*gs1 + (throwawayx + blockIdx.x)*gs3;
+   
+   float* tresptr ;
+   float* tgradinptr;
+   
+   for(int stry=stridey; stry>0; stry--) {
+   	int throwaway = stridey-stry < throwawayy;
+	   if(throwaway) {
+	   	starty = (stridey-stry+1) - throwawayy + stridey -1 ;
+   		sizey  = gih-1;
+   	}
+	   else 	{ 
+		   starty = (stridey-stry+1) - throwawayy -1 ;
+		   sizey  = gih;
+	   }
+	   
+	   for(int it2=0; it2<sizey; it2++) {
+         tresptr	   = resptr    + (starty + it2*stridey)*rs1;
+         tgradinptr	= gradinptr + (stry-1)*gs0;
+         if(throwaway)  { tgradinptr += (it2+1)*gs2 ; }
+         else           { tgradinptr += it2*gs2 ; }
+   
+         for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
+         {
+            tresptr[it4]=tgradinptr[it4];
+         }
+      }
+   }
+   
+}
+
+
+
+
+
+
 static int cunxn_ConvProto_updateGradInput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
@@ -885,8 +935,138 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    
    
    
-   THCudaTensor_resizeAs(gradInput, gradin);
-   THCudaTensor_copy(gradInput, gradin);
+   
+   
+     /* correct padright and padbottom */
+  int oldpadright = padright;
+  int oldpadbottom = padbottom;
+  padright = gow * stridex + kw - stridex - iw - padleft;
+  padbottom = goh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
+
+  /* input size with padding */
+  int piw = padleft + iw + padright; 
+  int pih = padtop + ih + padbottom;
+
+
+
+    
+   int throwawayx=stridex - kw%stridex;
+   int throwawayy=stridey - kh%stridey;
+   if (stridex==1 || stridex==throwawayx) { throwawayx=0 ; } 
+   if (stridey==1 || stridey==throwawayy) { throwawayy=0 ; }
+
+   /* clean this after */ 
+   int resw=piw;
+   int resh=pih;
+
+   THCudaTensor * result = THCudaTensor_newWithSize4d(bs, resh, resw, ip);
+   THCudaTensor_fill(result, 0);
+
+
+   int itres0 = 0;
+   int itgi0  = 0;
+   int starty, sizey;
+
+   float* gradinptr = THCudaTensor_data(gradin);
+   float* resptr = THCudaTensor_data(result);
+
+   /* Convert this to a CUDA kernel 
+      for(stry=stridey; stry>0; stry--) {
+      	int throwaway = stridey-stry < throwawayy;
+	      if(throwaway) {
+		      starty = (stridey-stry+1) - throwawayy + stridey -1 ;
+		      sizey  = gih-1;
+       	}
+	      else 	{ 
+		      starty = (stridey-stry+1) - throwawayy -1 ;
+		      sizey  = gih;
+	      }
+
+	      itgi0 = (stry-1)*gradin->stride[0];
+	
+         for (it1=0; it1<bs; it1++) {
+		      int itres1 = itres0 + it1*result->stride[0];
+		      int itgi1  = itgi0  + it1*gradin->stride[1];
+		      for (it2=0; it2<sizey; it2++) { 
+			      int itres2 = itres1 + (starty + it2*stridey)*result->stride[1];
+			      int itgi2  = itgi1 + it2*gradin->stride[2];
+			      if(throwaway) {itgi2 += gradin->stride[2];}
+			      for (it3=0; it3<giw-throwawayx; it3++ ) {
+				      int itres3 = itres2 + it3*result->stride[2];
+				      int itgi3  = itgi2 + (throwawayx+it3)*gradin->stride[3];
+				      for (it4=0; it4<ip; it4++) {
+					      resptr[itres3]= gradinptr[itgi3];
+					      itres3++;
+					      itgi3++;
+				      }
+			      }
+		      }
+	      } 
+
+
+      }
+
+   */
+
+
+
+   dim3 cgirblocks(giw-throwawayx, 1, bs);
+   dim3 cgirthreads(32);
+
+   int rs0 = result->stride[0];
+   int rs1 = result->stride[1];
+   int rs2 = result->stride[2];
+   int gs0 = gradin->stride[0];
+   int gs1 = gradin->stride[1];
+   int gs2 = gradin->stride[2];
+   int gs3 = gradin->stride[3];
+ 
+
+   copyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih);
+   /*
+      blockIdx.z  = [ 0, bs-1 ] (it1)
+      blockIdx.y  = [ 0 ] 
+      blockIdx.x  = [ 0, giw - throwawayx -1 ] (it3)
+      threadIdx.x = [ 0, 31   ] (it4)
+   */
+
+
+
+   /*real* gradinputptr = THTensor_(data)(gradInput);
+
+   itgi0=0;
+   itres0=0;
+   for (it1=0; it1<bs; it1++) {
+		int itres1 = itres0 + it1*result->stride[0];
+		int itgi1  = itgi0  + it1*gradInput->stride[0];
+		for (it2=0; it2<ih; it2++) { 
+			int itres2 = itres1 + (padtop + it2)*result->stride[1];
+			int itgi2  = itgi1 + it2*gradInput->stride[1];
+			for (it3=0; it3<iw; it3++ ) {
+				int itres3 = itres2 + (padleft+it3)*result->stride[2];
+				int itgi3  = itgi2 + it3*gradInput->stride[2];
+				for (it4=0; it4<ip; it4++) {
+					gradinputptr[itgi3]= resptr[itres3];
+					itres3++;
+					itgi3++;
+				}
+			}
+		}
+	} */
+
+   
+   
+   
+   
+   
+   
+   
+   THCudaTensor_resizeAs(gradInput, result);
+   THCudaTensor_copy(gradInput, result);
    
    
       
