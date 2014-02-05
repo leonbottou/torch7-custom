@@ -641,19 +641,19 @@ __global__ void copyGradOut(float* goptr, float* gocpyptr, int goh, int gow, int
 
 
 
-__global__ void copyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih)
+__global__ void copyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih, int padtop, int padleft, int ih, int iw)
 {
    /*
       blockIdx.z  = [ 0, bs-1 ] (it1)
       blockIdx.y  = [ 0 ] 
-      blockIdx.x  = [ 0, giw - throwawayx -1 ] (it3)
+      blockIdx.x  = [ 0, iw ] (it3)
       threadIdx.x = [ 0, 31   ] (it4)
    */
 
    int starty, sizey;
    
    resptr   += blockIdx.z*rs0 + blockIdx.x*rs2;
-   gradinptr+= blockIdx.z*gs1 + (throwawayx + blockIdx.x)*gs3;
+   gradinptr+= blockIdx.z*gs1 + (padleft + throwawayx + blockIdx.x)*gs3;
    
    float* tresptr ;
    float* tgradinptr;
@@ -670,14 +670,17 @@ __global__ void copyGradinResult(float* gradinptr, float* resptr, int throwawayx
 	   }
 	   
 	   for(int it2=0; it2<sizey; it2++) {
-         tresptr	   = resptr    + (starty + it2*stridey)*rs1;
-         tgradinptr	= gradinptr + (stry-1)*gs0;
-         if(throwaway)  { tgradinptr += (it2+1)*gs2 ; }
-         else           { tgradinptr += it2*gs2 ; }
-   
-         for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
-         {
-            tresptr[it4]=tgradinptr[it4];
+	      if((starty + it2*stridey - padtop)>-1 && (starty + it2*stridey - padtop)<ih)
+	      {
+            tresptr	   = resptr    + (starty + it2*stridey - padtop)*rs1;
+            tgradinptr	= gradinptr + (stry-1)*gs0;
+            if(throwaway)  { tgradinptr += (it2+1)*gs2 ; }
+            else           { tgradinptr += it2*gs2 ; }
+      
+            for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
+            {
+               tresptr[it4]=tgradinptr[it4];
+            }
          }
       }
    }
@@ -695,7 +698,7 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
   THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
 //  int dimension  = luaT_getfieldcheckint(L, 1, "dimension")-1;
-  THCudaTensor *gradInput  = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+  THCudaTensor *result  = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
   THCudaTensor *revk;
 
   int stridex = luaT_getfieldcheckint(L, 1, "dW");
@@ -960,10 +963,10 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    if (stridey==1 || stridey==throwawayy) { throwawayy=0 ; }
 
    /* clean this after */ 
-   int resw=piw;
-   int resh=pih;
+   int resw=iw;
+   int resh=ih;
 
-   THCudaTensor * result = THCudaTensor_newWithSize4d(bs, resh, resw, ip);
+   THCudaTensor_resize4d(result, bs, resh, resw, ip);
    THCudaTensor_fill(result, 0);
 
 
@@ -1014,7 +1017,7 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
 
 
 
-   dim3 cgirblocks(giw-throwawayx, 1, bs);
+   dim3 cgirblocks(iw, 1, bs);
    dim3 cgirthreads(32);
 
    int rs0 = result->stride[0];
@@ -1026,11 +1029,11 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    int gs3 = gradin->stride[3];
  
 
-   copyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih);
+   copyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw);
    /*
       blockIdx.z  = [ 0, bs-1 ] (it1)
       blockIdx.y  = [ 0 ] 
-      blockIdx.x  = [ 0, giw - throwawayx -1 ] (it3)
+      blockIdx.x  = [ 0, iw ] (it3)
       threadIdx.x = [ 0, 31   ] (it4)
    */
 
@@ -1065,8 +1068,9 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
    
    
    
-   THCudaTensor_resizeAs(gradInput, result);
-   THCudaTensor_copy(gradInput, result);
+   
+   //THCudaTensor_resizeAs(gradInput, result);
+   //THCudaTensor_copy(gradInput, result);
    
    
       
