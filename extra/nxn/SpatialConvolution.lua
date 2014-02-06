@@ -27,8 +27,8 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, sh
 -- zeroGradParameters will turn this to 1 and the next gradient 
 -- computation will flush the accumulated gradients
    self.zeroGradients = 0 
-   self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
-   self.gradBias = torch.Tensor(nOutputPlane)
+   self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW):zero()
+   self.gradBias = torch.Tensor(nOutputPlane):zero()
    
    self:reset()
 end

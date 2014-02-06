@@ -25,8 +25,8 @@ function ConvProto:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, pa
    self.weight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane)
    self.bias = torch.Tensor(nOutputPlane)
 
-   self.gradWeight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane)
-   self.gradBias = torch.Tensor(nOutputPlane)
+   self.gradWeight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane):zero()
+   self.gradBias = torch.Tensor(nOutputPlane):zero()
    
    self:reset()
 end
@@ -63,12 +63,12 @@ function ConvProto:updateGradInput(input, gradOutput)
 end
 
 function ConvProto:zeroGradParameters()
-   self.zeroGradients = 1
+   self.gradWeight:zero()
+   self.gradBias:zero()
    -- they will be zeroed during the gradient computation
 end
 
 function ConvProto:accGradParameters(input, gradOutput, scale)
     input.nxn.ConvProto_accGradParameters(self, input, gradOutput, scale) 
-    self.zeroGradients = 0
 --    return 
 end
