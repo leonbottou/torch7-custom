@@ -634,7 +634,7 @@ static int nxn_(ConvProto_accGradParameters)(lua_State *L)
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
-  THTensor *bias = luaT_getfieldcheckudata(L, 1, "bias", torch_Tensor);
+  THTensor *gradBias = luaT_getfieldcheckudata(L, 1, "gradBias", torch_Tensor);
 
 
 #if 0

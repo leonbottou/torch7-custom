@@ -532,6 +532,10 @@ end
 
 
 
+function ComputeGradBias(gradOutput)
+   local gradBias=gradout:sum(1):mean(2):mean(3):resize(gradout:size(4))
+   return gradBias
+end
 
 
 

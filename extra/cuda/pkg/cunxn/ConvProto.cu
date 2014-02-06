@@ -1087,9 +1087,241 @@ static int cunxn_ConvProto_updateGradInput(lua_State *L)
   return 1;
 }
 
+
+
+
+
+
+__global__ void copyGradOutInBuffer(float* goptr, float* gocpyptr, int oh, int ow, int toh, int tow, int op)
+{
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, oh-1  ] (it2)
+      blockIdx.x  = [ 0, ow-1  ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+
+   gocpyptr += blockIdx.z*toh*tow*op + blockIdx.y*tow*op + blockIdx.x*op;
+   goptr += ((blockIdx.z*oh+blockIdx.y)*ow+blockIdx.x)*op;
+
+   int i;
+   for(i=threadIdx.x; i<op; i+=blockDim.x)
+   {
+      gocpyptr[i]=goptr[i];
+   }
+
+}
+
+
+
+
+
+
+
+
+static int cunxn_ConvProto_accGradParameters(lua_State *L)
+{
+
+
+
+  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
+  THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
+  THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
+  THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
+
+  float scale = luaL_optnumber(L, 4, 1);
+
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
+
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
+
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+
+  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
+  float beta = luaT_getfieldchecknumber(L, 1, "beta");
+  
+
+  float onef=1;
+
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int kh = gradWeight->size[0];
+  int op = gradWeight->size[1];
+  int kw = gradWeight->size[2];
+  assert(ip==gradWeight->size[3]);
+  
+  /* compute output size */
+  int ow = ( iw + padleft + padright - kw ) / stridex + 1;
+  int oh = ( ih + padtop + padbottom - kh ) / stridey + 1;
+
+  /* correct padright and padbottom */
+//  int oldpadright = padright;
+//  int oldpadbottom = padbottom;
+  padright = ow * stridex + kw - stridex - iw - padleft;
+  padbottom = oh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
+
+  /* input size with padding */
+  int piw = padleft + iw + padright; 
+  int pih = padtop + ih + padbottom;
+
+  /* number of horizontal strides between nonoverlapping runs */
+  int nxs = 1;
+  if (!overlap) { nxs = (kw + stridex - 1) / stridex ;}
+
+  /* total size of output buffer */
+  int tow = (piw + stridex - 1) / stridex;
+  int toh = (pih + stridey - 1) / stridey;
+
+  /* total size of input and output buffers */
+  int tiw = tow * stridex;
+  int tih = toh * stridey;  
+  assert(tiw >= piw && piw >= iw);
+  assert(tih >= pih && pih >= ih);
+
+  /*icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+  THLongStorage *icopysize = THLongStorage_newWithSize(5);
+  icopysize->data[0]=stridey;
+  icopysize->data[1]=bs;
+  icopysize->data[2]=toh;
+  icopysize->data[3]=tiw;
+  icopysize->data[4]=ip;
+  THCudaTensor* icopy = THCudaTensor_newWithSize(icopysize, NULL);
+  THCudaTensor_fill(icopy, 0);
+
+
+  float* icopyptr=THCudaTensor_data(icopy);
+  float* inputptr=THCudaTensor_data(input);
+
+  dim3 icopyblocks(iw, bs, stridey);
+  dim3 icopythreads(32);
+  
+  inputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+
+
+
+  THCudaTensor* kcopy = gradWeight;
+  THCudaTensor* ocopy = THCudaTensor_newWithSize4d(bs, toh, tow, op);
+  THCudaTensor_fill(ocopy, 0);
+  
+  float* gradoutptr=THCudaTensor_data(gradOutput);
+  float* ocpyptr=THCudaTensor_data(ocopy);
+  
+  dim3 goibblocks(ow, oh, bs);
+  dim3 goibthreads(32);
+  
+   copyGradOutInBuffer <<<goibblocks,goibthreads>>>(gradoutptr, ocpyptr, oh, ow, toh, tow, op);
+
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, oh-1  ] (it2)
+      blockIdx.x  = [ 0, ow-1  ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+
+  
+
+
+  cublasHandle_t handle;
+  cublasStatus_t err = cublasCreate(&handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+
+   /* call GEMM */
+	int hcall;
+   for (hcall=0; hcall<nxs; hcall++) {
+	   int vcall;
+      for (vcall=0; vcall<kh; vcall++) {
+         int sq = vcall / stridey;
+         int sr = vcall - sq * stridey;
+         /* local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+         /* float* iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}]) */
+		   float* iptr = THCudaTensor_data(icopy);
+		   iptr       += (sr)*icopy->stride[0] + (sq)*icopy->stride[2] +  (hcall*stridex)*icopy->stride[3];
+
+         /* local kptr  = torch.data(kcopy:select(1,vcall+1)) */
+		   float* kptr = THCudaTensor_data(kcopy);
+		   kptr	 	+= vcall * kcopy->stride[0];
+
+         /* local optr = torch.data(ocopy:select(3,hcall+1)) */
+		   float* optr = THCudaTensor_data(ocopy);
+         optr		+= hcall * ocopy->stride[2];
+
+
+         int nrun = (bs-1)*toh*tow + oh*tow;
+         int ngem = (nrun - hcall) / nxs;
+
+         //printf("calling sgemm...");
+
+         /*THBlas_(gemm)('T','N', op, ngem, kw*ip, 
+              1, kptr, kw*ip, iptr, nxs*stridex*ip,
+              1, optr, nxs*op ); */
+         err = cublasSgemm(handle,
+                           CUBLAS_OP_N, CUBLAS_OP_T,
+                           kw*ip,op, ngem, 
+                           &onef,
+                           iptr, nxs*stridex*ip, 
+                           optr, nxs*op, 
+                           &onef,
+                           kptr, kw*ip );     
+              
+              
+              
+         if (err != CUBLAS_STATUS_SUCCESS) { printf("error in sgemm"); }
+         //else {printf("called sgemm..."); }
+      }
+   }
+
+
+  err = cublasDestroy(handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
+
+
+
+
+
+  // check for errors
+  cudaError_t lasterror = cudaGetLastError();
+  if (lasterror != cudaSuccess) {
+    printf("error in ConvProto.updateOutput: %s\n", cudaGetErrorString(lasterror));
+    THError("aborting");
+  }
+ 
+  // final cut:
+  //THCudaTensor_free(input); 
+  THCudaTensor_free(icopy);
+  THCudaTensor_free(ocopy);
+  //THCudaTensor_select(output, NULL, dimension, 0);
+
+  return 1;
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 static const struct luaL_Reg cunxn_ConvProto__ [] = {
   {"ConvProto_updateOutput", cunxn_ConvProto_updateOutput},
   {"ConvProto_updateGradInput", cunxn_ConvProto_updateGradInput},
+  {"ConvProto_accGradParameters", cunxn_ConvProto_accGradParameters},
   {NULL, NULL}
 };
 
