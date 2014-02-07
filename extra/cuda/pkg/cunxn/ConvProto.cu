@@ -40,12 +40,10 @@ __global__ void inputcopykernel(float* inputptr, float* icopyptr, int stridey, i
          for (int it2=0; it2<inputsize2; it2++) { 
             //int iticopy3=blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+(padleft+blockIdx.x)*ip+it2*tiw*ip;
             //int itinput3=(blockIdx.y)*ih*iw*ip+fin*iw*ip+(blockIdx.x)*ip +it2*stridey*iw*ip;
-
             for (int it4=threadIdx.x; it4<ip; it4+=blockDim.x) 
             {
                icopyptr[it4]=inputptr[it4];
             }
-            
             inputptr += stridey*iw*ip;
             icopyptr += tiw*ip;
 			}
@@ -1117,20 +1115,22 @@ __global__ void copyGradOutInBuffer(float* goptr, float* gocpyptr, int oh, int o
 __global__ void computeGradBias(float* goptr, float* gradbiasptr, int bs, int oh, int ow, int op, float scale)
 {
    /* blockIdx.x  = [ 0, ceil(op/32) ]
+      blockIdx.y  = [ 0, bs-1        ]
       threadIdx.x = [ 0, 31          ]   
    */
 
+   goptr += blockIdx.y*oh*ow*op;
    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
    
    float b=0;
    
    if (idx<op) {
-      for(int i=0; i<bs*oh*ow; i++) {
+      for(int i=0; i<oh*ow; i++) {
          b += goptr[i*op + idx];
       }
+   atomicAdd(&gradbiasptr[idx], b*scale);
    }
    
-   gradbiasptr[idx] = b*scale;
 }
 
 
@@ -1251,7 +1251,7 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
 
   float* gradbiasptr=THCudaTensor_data(gradBias);
   
-  dim3 gbblocks((op+31)/32);
+  dim3 gbblocks((op+31)/32, bs);
   dim3 gbthreads(32);
   computeGradBias <<< gbblocks, gbthreads >>> (gradoutptr, gradbiasptr, bs, oh, ow, op, scale);
   
