@@ -532,8 +532,9 @@ end
 
 
 
-function ComputeGradBias(gradOutput)
-   local gradBias=gradout:sum(1):mean(2):mean(3):resize(gradout:size(4))
+function ComputeGradBias(gradOutput, scale)
+   scale=scale or 1
+   local gradBias=gradOutput:sum(1):sum(2):sum(3):resize(gradOutput:size(4)):mul(scale)
    return gradBias
 end
 
@@ -543,7 +544,9 @@ end
 
 
 
-function ComputeGradWeights(gradOutput, input, kernel, parms)
+function ComputeGradWeights(gradOutput, input, kernel, parms, scale)
+   scale=scale or 1
+
    -- typecheck
    local type = torch.typename(input)
    assert(type == "torch.FloatTensor" or type == "torch.DoubleTensor")
@@ -718,7 +721,7 @@ function ComputeGradWeights(gradOutput, input, kernel, parms)
          
          
          GEMM(type,'N','T',  kw*ip,op, ngem, 
-              1, iptr, nxs*stridex*ip, optr, nxs*op, 
+              scale, iptr, nxs*stridex*ip, optr, nxs*op, 
               1, kptr, kw*ip) 
       end
    end

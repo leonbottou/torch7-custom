@@ -750,7 +750,7 @@ int it1;
   
   real* gradoutptr=THTensor_(data)(gradOutput);
   real* ocpyptr = THTensor_(data)(ocopy);
-
+  real* gradbiasptr = THTensor_(data)(gradBias);
   
   /* here we take alpha = 1 and beta = 0 */
 	int itout0=0;
@@ -769,7 +769,8 @@ int it1;
                   int itocpy3=itocpy2+(it3)*op;
                   int it4;
                   for (it4=0; it4<op; it4++) {
-                     ocpyptr[itocpy3]=gradoutptr[itout3];
+                     ocpyptr[itocpy3]  = gradoutptr[itout3];
+                     gradbiasptr[it4] += gradoutptr[itout3];
                      itout3++;
                      itocpy3++;
 					}
@@ -777,7 +778,7 @@ int it1;
 			}
 		 }   
   
-  
+  THTensor_(mul)(gradBias, gradBias, scale);
   
   
 
@@ -808,7 +809,7 @@ int it1;
               1, kptr, kw*ip, iptr, nxs*stridex*ip,
               1, optr, nxs*op ); */
          THBlas_(gemm)('N','T', kw*ip,op, ngem, 
-              1, iptr, nxs*stridex*ip, optr, nxs*op, 
+              scale, iptr, nxs*stridex*ip, optr, nxs*op, 
               1, kptr, kw*ip ); 
       }
    }

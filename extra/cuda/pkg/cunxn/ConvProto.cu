@@ -1114,6 +1114,26 @@ __global__ void copyGradOutInBuffer(float* goptr, float* gocpyptr, int oh, int o
 
 
 
+__global__ void computeGradBias(float* goptr, float* gradbiasptr, int bs, int oh, int ow, int op, float scale)
+{
+   /* blockIdx.x  = [ 0, ceil(op/32) ]
+      threadIdx.x = [ 0, 31          ]   
+   */
+
+   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   
+   float b=0;
+   
+   if (idx<op) {
+      for(int i=0; i<bs*oh*ow; i++) {
+         b += goptr[i*op + idx];
+      }
+   }
+   
+   gradbiasptr[idx] = b*scale;
+}
+
+
 
 
 
@@ -1228,7 +1248,16 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
       threadIdx.x = [ 0, 31    ] (it4)
    */
 
+
+  float* gradbiasptr=THCudaTensor_data(gradBias);
   
+  dim3 gbblocks((op+31)/32);
+  dim3 gbthreads(32);
+  computeGradBias <<< gbblocks, gbthreads >>> (gradoutptr, gradbiasptr, bs, oh, ow, op, scale);
+  
+   /* blockIdx.x  = [ 0, ceil(op/32) ]
+      threadIdx.x = [ 0, 31          ]   
+   */
 
 
   cublasHandle_t handle;
@@ -1267,7 +1296,7 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
          err = cublasSgemm(handle,
                            CUBLAS_OP_N, CUBLAS_OP_T,
                            kw*ip,op, ngem, 
-                           &onef,
+                           &scale,
                            iptr, nxs*stridex*ip, 
                            optr, nxs*op, 
                            &onef,

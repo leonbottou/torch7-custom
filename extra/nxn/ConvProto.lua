@@ -69,6 +69,7 @@ function ConvProto:zeroGradParameters()
 end
 
 function ConvProto:accGradParameters(input, gradOutput, scale)
+    scale = scale or 1
     input.nxn.ConvProto_accGradParameters(self, input, gradOutput, scale) 
 --    return 
 end
