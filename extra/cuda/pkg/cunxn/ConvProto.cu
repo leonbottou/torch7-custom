@@ -18,14 +18,56 @@
 /********************************************/
 
 
-__global__ void inputcopykernel(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
+__global__ void inputcopykernelsmall(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
       int iw, int ip, int padtop, int padleft, int toh, int tiw)
 {
       /* blockIdx.z  = s     [ 0, stridey-1 ]
          blockIdx.y  = it1   [ 0, bs-1      ]
-         blockIdx.x  = it3   [ 0, iw-1      ]
-         threadIdx.x = it4   [ 0, 31        ]
+         blockIdx.x  = it3   [ 0, (iw/blockDim.y)-1+1      ]
+         threadIdx.x = it4x  [ 0, ip-1      ]
+         threadIdx.y = it4y  [ 0, 32/ip-1   ]
        */
+         
+      int fout = (MAX(0,padtop-blockIdx.z)+stridey-1)/stridey;
+      int fin = fout * stridey - padtop + blockIdx.z;
+
+      if (fin < ih) 
+      {
+         //inputptr += (blockIdx.y)*ih*iw*ip+fin*iw*ip+(blockIdx.x*blockDim.y)*ip;
+         //icopyptr += blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+(padleft+blockIdx.x*blockDim.y)*ip;
+         inputptr += (blockIdx.y)*ih*iw*ip+fin*iw*ip;
+         icopyptr += blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+padleft*ip;
+         
+         int inputsize2   = ((ih-fin) + stridey - 1) / stridey;
+
+         for (int it2=0; it2<inputsize2; it2++) { 
+            //int iticopy3=blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+(padleft+blockIdx.x)*ip+it2*tiw*ip;
+            //int itinput3=(blockIdx.y)*ih*iw*ip+fin*iw*ip+(blockIdx.x)*ip +it2*stridey*iw*ip;
+            if((blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y<ip*iw) {
+            icopyptr[(blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y]=inputptr[(blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y];
+            }
+
+
+            //for (int it4=threadIdx.x+blockDim.x*threadIdx.y; it4<ip*iw; it4+=blockDim.x*blockDim.y) 
+            //{
+            //   icopyptr[it4]=inputptr[it4];
+            //}
+            // => next row
+            inputptr += stridey*iw*ip;
+            icopyptr += tiw*ip;
+			}
+      }
+}
+      
+
+__global__ void inputcopykernel(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
+      int iw, int ip, int padtop, int padleft, int toh, int tiw)
+{
+      // blockIdx.z  = s     [ 0, stridey-1 ]
+      // blockIdx.y  = it1   [ 0, bs-1      ]
+      // blockIdx.x  = it3   [ 0, iw-1      ]
+      // threadIdx.x = it4   [ 0, 31        ]
+       
          
       int fout = (MAX(0,padtop-blockIdx.z)+stridey-1)/stridey;
       int fin = fout * stridey - padtop + blockIdx.z;
@@ -282,19 +324,36 @@ static int cunxn_ConvProto_updateOutput(lua_State *L)
   float* icopyptr=THCudaTensor_data(icopy);
   float* inputptr=THCudaTensor_data(input);
 
+  //dim3 icopyblocks(iw, bs, stridey);
+  // dim3 icopythreads(32);
+  //dim3 icopythreads(MIN(32,ip), MAX(32/ip,1));
+  
+  if(ip<32) {
+  dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
+  dim3 icopythreads(MIN(32,ip), 32/ip);
+  inputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+      /* blockIdx.z  = s     [ 0, stridey-1 ]
+         blockIdx.y  = it1   [ 0, bs-1      ]
+         blockIdx.x  = it3   [ 0, (iw/blockDim.y)-1+1      ]
+         threadIdx.x = it4x  [ 0, ip-1      ]
+         threadIdx.y = it4y  [ 0, 32/ip-1   ]
+       */
+
+  }
+  else {
   dim3 icopyblocks(iw, bs, stridey);
   dim3 icopythreads(32);
-  
   inputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
-
-/*__global__ void inputcopykernel(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
-      int iw, int ip, int padtop, int padleft, int toh, int tiw)
-         blockIdx.z  = s     [ 0, stridey-1 ]
-         blockIdx.y  = it1   [ 0, bs-1      ]
-         blockIdx.x  = it3   [ 0, iw-1      ]
-         threadIdx.x = it4   [ 0, 31        ]
-*/
+      /*__global__ void inputcopykernel(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
+            int iw, int ip, int padtop, int padleft, int toh, int tiw)
+               blockIdx.z  = s     [ 0, stridey-1 ]
+               blockIdx.y  = it1   [ 0, bs-1      ]
+               blockIdx.x  = it3   [ 0, iw-1      ]
+               threadIdx.x = it4   [ 0, 31        ]
+      */
        
+  }
+  
        
 /* Convert this to a CUDA kernel...
 
@@ -1223,11 +1282,16 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
   float* icopyptr=THCudaTensor_data(icopy);
   float* inputptr=THCudaTensor_data(input);
 
+  if(ip<32) {
+  dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
+  dim3 icopythreads(MIN(32,ip), 32/ip);
+  inputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+  }
+  else {
   dim3 icopyblocks(iw, bs, stridey);
   dim3 icopythreads(32);
-  
   inputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
-
+  }
 
 
   THCudaTensor* kcopy = gradWeight;
