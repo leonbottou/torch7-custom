@@ -7,6 +7,7 @@ include('Copy.lua')
 
 include('ReLU.lua')
 include('Affine.lua')
+include('Dropout.lua')
 include('SpatialConvolution.lua')
 include('SpatialGlobalMaxPooling.lua')
 include('SpatialMaxPooling.lua')
