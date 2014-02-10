@@ -3,6 +3,7 @@ require('libnxn')
 
 include('Module.lua')
 include('Sequential.lua')
+include('Column.lua')
 include('Copy.lua')
 
 include('ReLU.lua')
