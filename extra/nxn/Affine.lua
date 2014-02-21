@@ -17,6 +17,8 @@ function Affine:updateOutput(input)
 end
 
 function Affine:updateGradInput(input, gradOutput)
-   self.gradInput:resizeAs(input):copy(gradOutput):mul(self.factor)
-   return self.gradInput
+   if self.gradInput then
+      self.gradInput:resizeAs(input):copy(gradOutput):mul(self.factor)
+      return self.gradInput
+   end
 end

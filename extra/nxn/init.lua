@@ -15,6 +15,9 @@ include('SpatialMaxPooling.lua')
 include('CrossMapNormalization.lua')
 include('SoftMax.lua')
 
+include('Linear.lua')
+include('Reshape.lua')
+
 include('ConvProto.lua')
 include('testSgemm.lua')
 

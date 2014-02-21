@@ -28,6 +28,9 @@ function Copy:updateOutput(input)
 end
 
 function Copy:updateGradInput(input, gradOutput)
-   self.gradInput:resize(gradOutput:size()):copy(gradOutput)
-   return self.gradInput
+   if self.gradInput then
+      self.gradInput:resize(gradOutput:size()):copy(gradOutput)
+      return self.gradInput
+   end
 end
+
