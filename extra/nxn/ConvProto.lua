@@ -33,6 +33,18 @@ end
 
 function ConvProto:reset(stdv)
    if stdv then
+      stdv = stdv
+   else
+      stdv = 1/math.sqrt(self.kW*self.kH*self.nInputPlane)
+   end
+   torch.randn(self.weight, self.weight:size())
+   self.weight:mul(stdv)
+   torch.randn(self.bias, self.bias:size())
+   self.bias:mul(stdv)
+end
+
+function ConvProto:reset(stdv)
+   if stdv then
       stdv = stdv * math.sqrt(3)
    else
       stdv = 1/math.sqrt(self.kW*self.kH*self.nInputPlane)

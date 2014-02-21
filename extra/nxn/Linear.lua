@@ -13,7 +13,7 @@ end
 
 function Linear:reset(stdv)
    if stdv then
-      stdv = stdv * math.sqrt(3)
+      stdv = stdv
    else
       stdv = 1./math.sqrt(self.weight:size(2))
    end
