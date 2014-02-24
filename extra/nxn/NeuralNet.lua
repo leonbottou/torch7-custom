@@ -1,3 +1,6 @@
+require 'optim'
+
+
 local NeuralNet = torch.class('nxn.NeuralNet')
 
 -- to do : 
@@ -35,11 +38,19 @@ function NeuralNet:__init()
    self.batchcount = 0
    self.gradupperbound = 1
    
+   self.nclasses = 0
+   self.confusion = 0
+   
 end
 
 
 function NeuralNet:setNetwork(net)
    self.network=net
+end
+
+function NeuralNet:setNumclasses(nclasses)
+   self.nclasses=nclasses
+   self.confusion=optim.ConfusionMatrix(nclasses)
 end
 
 
@@ -115,18 +126,21 @@ function NeuralNet:setInputsize(constantinputsize, inputsize, jittering)
 end
 
 
-
-function train()
-
+function NeuralNet:getBatch(batchidx)
+   local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
+   local batch=batchfile[1]:float()
+   batch:add(-1, self.meanoverset)
+   local target=batchfile[2]
+   return batch, target
 end
 
 
-function resume()
-
+function NeuralNet:train(nepochs)
+   -- init 
+   if self.batchcount == 0 then 
+      self.shuffleTrainset()
+   end
 end
-
-
-
 
 
 
