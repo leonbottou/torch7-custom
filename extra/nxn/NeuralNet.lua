@@ -1,5 +1,5 @@
 require 'optim'
-
+require 'image'
 
 local NeuralNet = torch.class('nxn.NeuralNet')
 
@@ -13,34 +13,43 @@ local NeuralNet = torch.class('nxn.NeuralNet')
 -- gradient clipping per-kernel
 
 function NeuralNet:__init()
-   self.network = {}
-   self.criterion = {}
-   self.meanoverset = torch.Tensor()
-   self.datasetdir = ''
-   self.trainset = {}
-   self.testset = {}
-   self.batchsize = 0
+   self.network = nil              -- should be nxn.Sequential
+   self.criterion = nil            -- should be nxn.Criterion
    
-   self.checkpointdir = ''
-   self.checkpointname = ''
+   self.meanoverset = nil          -- should be a torch.Tensor() of the same type as the network input
+   self.datasetdir = nil           -- should be a '/path/to/dataset'
+   self.trainset = nil             -- should be a {first, last}
+   self.trainsetsize = nil         -- should be last - first + 1
+   self.testset = nil              -- should be a {first, last}
+   self.batchsize = nil            -- should be an integer
    
-   self.batchshuffle = {}
+   self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
+   self.checkpointname = nil       -- should be a 'filename'
    
-   self.momentum = 0
-   self.learningrate = 0
-   self.lrdecay = 0
-   self.weightdecay = 0
+   self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
    
-   self.constantinputsize = false
-   self.inputsize = {0, 0}
-   self.jittering = {0, 0}
+   -- optional stuff
+   self.momentum = 0               -- should be between 0 and 1
+   self.learningrate = 0           -- optional, but if you want to train... well, you know.
+   self.lrdecay = 0                -- will decay like : LR(t) = learningrate / ( 1 + lrdecay * number of batches seen by the net )
+   self.weightdecay = 0            -- will put a L2-norm penalty on the weights
    
-   self.batchcount = 0
-   self.gradupperbound = 1
+   self.constantinputsize = false  -- jittering will only happen if the inputs are of constant size (still have to think if this constraint should be necessary)
+   self.inputsize = nil
+   self.jittering = nil
+   self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
+   self.horizontalflip = false     -- should be true or false, will flip horizontally your input before feeding them to the net
    
-   self.nclasses = 0
-   self.confusion = 0
+   self.epochshuffle = false       -- should be true or false (shuffle the minibatch order at the beginning of each epoch)
+   self.epochcount = 0             -- where the network is at
+   self.batchcount = 0             -- where the network is at
+   self.gradupperbound = nil       -- L2-norm constraint on the gradients : if a gradient violates the constraint, it will be projected on the L2 unit-ball
    
+   self.nclasses = nil             -- number of classes of the net output
+   self.confusion = nil            -- confusion matrix, useful for monitoring the training
+   
+   self.costvalues = {}             -- we want to store the values of the cost during training
+   self.testcostvalues = {}         -- we want to store the values of the cost during test passes
 end
 
 
@@ -56,6 +65,7 @@ end
 
 function NeuralNet:setCriterion(criterion)
    self.criterion=criterion
+   self.criterion.sizeAverage=false
 end
 
 
@@ -71,11 +81,17 @@ end
 
 function NeuralNet:setTrainsetRange(first, last)
    self.trainset={first, last}
+   self.trainsetsize=last-first
+   
 end
 
 
 function NeuralNet:setTestsetRange(first, last)
    self.testset={first, last}
+end
+
+function NeuralNet:setInputType(tensortype)
+   self.inputtype=tensortype
 end
 
 
@@ -90,10 +106,21 @@ function NeuralNet:setCheckpoint(checkpointdir, checkpointname)
 end
 
 
-function NeuralNet:shuffleTrainset()
-   self.batchshuffle=torch.randperm(self.trainset[2] - self.trainset[1])
+function NeuralNet:saveNet()
+   torch.save(paths.concat(self.checkpointdir, self.savefilename), self)
 end
 
+function NeuralNet:setEpochShuffle(epochshuffle)
+   self.epochshuffle=epochshuffle
+end
+
+function NeuralNet:shuffleTrainset()
+   self.batchshuffle=torch.randperm(self.trainsetsize)
+end
+
+function NeuralNet:getBatchNum(idx)
+   return self.trainset[1]+self.batchshuffle[idx]-1
+end
 
 function NeuralNet:setMomentum(momentum)
    self.momentum=momentum
@@ -119,26 +146,238 @@ function NeuralNet:setGradupperbound(gradupperbound)
 end
 
 
-function NeuralNet:setInputsize(constantinputsize, inputsize, jittering)
-   self.constantinputsize=constantinputsize
+function NeuralNet:setInputsize(inputsize, jittering)
+   -- inputsize and jittering are always (x,y)
+   -- but batches are (batchsize, y, x, channel)
+   self.constantinputsize=true
    self.inputsize = inputsize
    self.jittering = jittering
 end
 
+function NeuralNet:setHorizontalflip(horizontalflip)
+   self.horizontalflip=horizontalflip
+end
+
+
+
+-- you can change these to load another kind of batches...
 
 function NeuralNet:getBatch(batchidx)
    local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
-   local batch=batchfile[1]:float()
-   batch:add(-1, self.meanoverset)
+   local batch=batchfile[1]:type(self.inputtype)
+   if self.meanoverset then
+      batch:add(-1, self.meanoverset)
+   end
    local target=batchfile[2]
    return batch, target
 end
 
+function NeuralNet:getTestBatch(batchidx)
+   local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
+   local batch=batchfile[1]:type(self.inputtype)
+   if self.meanoverset then
+      batch:add(-1, self.meanoverset)
+   end
+   local target=batchfile[2]
+   return batch, target
+end
 
-function NeuralNet:train(nepochs)
-   -- init 
-   if self.batchcount == 0 then 
-      self.shuffleTrainset()
+--
+
+
+function NeuralNet:getNumBatchesSeen()
+   return self.epochcount*self.trainsetsize+self.batchcount
+end
+
+
+function NeuralNet:showL1Filters()
+   local p,g = self.network:parameters()
+   foo=p[1]:float()
+   foo=foo:transpose(3,4):transpose(1,2):transpose(2,3)
+   image.display({image=foo, zoom=3}) 
+end
+
+
+function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
+   -- do a lot of tests and return errors if necessary :
+   if not nepochs then
+      error('NeuralNet:train(n [, fsave, fmeas]), will train until epoch n is reached (starts at 0), save every fsave batches, take measurements every fmeas batches (you can set these to nil)') 
+   end
+
+   if not self.network then
+      error('no network : use NeuralNet:setNetwork(net)') 
+   end
+
+   if not self.criterion then
+      error('no criterion : use NeuralNet:setCriterion(criterion)') 
+   end
+
+   if not self.datasetdir then
+      print('no dataset folder : use NeuralNet:setDatasetdir("/path/to/dataset"), or write your own NeuralNet:getBatch(idx) function') 
+   end
+
+   if not self.trainset then
+      error('no training set range : use NeuralNet:setTrainsetRange(first, last)') 
+   end
+   
+   if not self.batchsize then
+      error('no batch size set : use NeuralNet:setBatchsize(first, last)') 
+   end
+   
+   if measurementsfrequency and (not self.testset) then
+      error('no validation set range : use NeuralNet:setTestsetRange(first, last)') 
+   end
+   
+   if savefrequency and ((not self.checkpointdir) or (not self.checkpointname)) then
+      error('no checkpoint : use NeuralNet:setCheckpoint("/path/to/checkpoint", "checkpointname")')
+   end
+   
+   if not self.nclasses then
+      error('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
+   end
+   
+   
+   
+   
+   
+   
+   
+   
+   time=torch.Timer()
+   -- training loop
+   while self.epochcount<nepochs do
+      -- init 
+      if self.batchcount > self.trainsetsize then
+         self.epochcount = self.epochcount + 1 
+            self.batchcount = 0
+      end   
+      
+      if self.batchcount == 0 then 
+         if self.epochshuffle or self.epochcount==0 then
+            self:shuffleTrainset()
+         end
+         self.batchcount = 1
+      end
+      
+      -- get proper batch
+      local batchidx = self:getBatchNum(self.batchcount)
+      self.batchcount = self.batchcount + 1
+      
+      local input, target = self:getBatch(batchidx)
+      
+      if self.horizontalflip and torch.bernoulli(0.5)==1 then
+         local input2=input:clone()
+         for xx=1, originalimgsize do
+            input:select(3,xx):copy(input2:select(3, self.inputsize[1]+1-xx))
+         end
+      end
+      
+      local jitteredinput = input
+      -- jitter/crop, only if inputsize is constant
+      if self.constantinputsize then
+         -- crop pixels on whole batch
+         local xstart=math.random(1,self.jittering[1])
+         local ystart=math.random(1,self.jittering[2])
+         jitteredinput = input:narrow(2,ystart,(self.inputsize[2]-self.jittering[2])):narrow(3,xstart,(self.inputsize[1]-self.jittering[1]))
+      end
+      
+      
+      -- forward 
+      self.network:forward(jitteredinput)
+      self.criterion:forward(self.network.output, target)
+      
+      -- confusion : only interesting for classification
+      if self.network.output:dim()==2 then
+         for k=1,self.batchsize do
+            self.confusion:add(self.network.output[{k,{}}], target[{k}])
+         end
+         self.confusion:updateValids()
+      end
+      
+      print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/self.batchsize..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
+      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
+      self.confusion:zero()
+      time:reset()
+      
+      
+      
+      
+      -- backward :
+      
+      local df_do=self.criterion:backward(self.network.output, target)
+      local currentlr = self.learningrate / (1 + self.lrdecay * self:getNumBatchesSeen())
+      local params, gradients =self.network:parameters()
+      
+      -- apply momentum :
+      for idx=1,#gradients do 
+         gradients[idx]:mul(self.momentum)
+      end
+      
+      -- compute and accumulate gradients
+      self.network:backward(jitteredinput, df_do, currentlr/self.batchsize)
+      
+      -- apply weight decay :
+      for idx=1,#gradients do
+         gradients[idx]:add(self.weightdecay*currentlr, params[idx])
+      end
+      
+      -- clip gradients
+      if self.gradupperbound then
+         for idx=1,#gradients do
+            local gnorm=gradients[idx]:norm()
+            if gnorm > self.gradupperbound then
+               gradients[idx]:mul(self.gradupperbound/gnorm)
+            end
+         end
+      end
+      self.network:updateParameters(1)
+      
+      if measurementsfrequency then
+         if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
+            self:showL1Filters()
+            
+            for idx=1,#params do 
+               --print('param id : '.. idx)
+               local WorB
+               if math.mod(idx,2)==1 then WorB=' weight' else WorB=' bias' end
+               print('module '..math.ceil(idx/2)..WorB..' mean : '..(params[idx]:mean())..', grad/LR mean : '..(gradients[idx]:mean()*currentlr))
+               print('module '..math.ceil(idx/2)..WorB..' std  : '..(params[idx]:std())..', grad/LR std  : '..(gradients[idx]:std()*currentlr))
+               print(' ')
+            end
+            
+            local meancost=0
+            -- run on validation set :
+            for valbatchidx=self.testset[1],self.testset[2] do
+               local valbatch,valtarget=self:getTestBatch(valbatchidx)  
+               local jitteredvalinput = valbatch
+               if constantinputsize then
+                  jitteredvalinput = valbatch:narrow(2,math.floor(1+self.jittering[2]/2), self.inputsize[2] - math.floor(self.jittering[2]/2)):narrow(3,math.floor(1+self.jittering[1]/2), self.inputsize[1] - math.floor(self.jittering[1]/2))
+               end
+               self.network:forward(jitteredvalinput)
+               self.criterion:forward(self.network.output, valtarget)
+               meancost=meancost+crit.output
+               if self.network.output:dim()==2 then
+                  for k=1,batchsize do
+                     self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+                  end
+               end
+            end
+            meancost=meancost/(self.testset[2]-self.testset[1]+1)/self.batchsize
+            self.confusion:updateValids()
+            print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
+            table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
+            self.confusion:zero()
+            
+         end
+      end
+      
+      if savefrequency then
+         if math.mod(self:getNumBatchesSeen()-1,savefrequency)==0 then
+            self:save()
+         end
+      end
+      
+      
    end
 end
 
@@ -153,4 +392,40 @@ end
 
 
 
-   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
