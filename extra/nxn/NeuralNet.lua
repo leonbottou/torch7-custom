@@ -13,43 +13,45 @@ local NeuralNet = torch.class('nxn.NeuralNet')
 -- gradient clipping per-kernel
 
 function NeuralNet:__init()
-   self.network = nil              -- should be nxn.Sequential
-   self.criterion = nil            -- should be nxn.Criterion
-   
-   self.meanoverset = nil          -- should be a torch.Tensor() of the same type as the network input
-   self.datasetdir = nil           -- should be a '/path/to/dataset'
-   self.trainset = nil             -- should be a {first, last}
-   self.trainsetsize = nil         -- should be last - first + 1
-   self.testset = nil              -- should be a {first, last}
-   self.batchsize = nil            -- should be an integer
-   
-   self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
-   self.checkpointname = nil       -- should be a 'filename'
-   
-   self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
-   
-   -- optional stuff
-   self.momentum = 0               -- should be between 0 and 1
-   self.learningrate = 0           -- optional, but if you want to train... well, you know.
-   self.lrdecay = 0                -- will decay like : LR(t) = learningrate / ( 1 + lrdecay * number of batches seen by the net )
-   self.weightdecay = 0            -- will put a L2-norm penalty on the weights
-   
-   self.constantinputsize = false  -- jittering will only happen if the inputs are of constant size (still have to think if this constraint should be necessary)
-   self.inputsize = nil
-   self.jittering = nil
-   self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
-   self.horizontalflip = false     -- should be true or false, will flip horizontally your input before feeding them to the net
-   
-   self.epochshuffle = false       -- should be true or false (shuffle the minibatch order at the beginning of each epoch)
-   self.epochcount = 0             -- where the network is at
-   self.batchcount = 0             -- where the network is at
-   self.gradupperbound = nil       -- L2-norm constraint on the gradients : if a gradient violates the constraint, it will be projected on the L2 unit-ball
-   
-   self.nclasses = nil             -- number of classes of the net output
-   self.confusion = nil            -- confusion matrix, useful for monitoring the training
-   
-   self.costvalues = {}             -- we want to store the values of the cost during training
-   self.testcostvalues = {}         -- we want to store the values of the cost during test passes
+      self.network = nil              -- should be nxn.Sequential
+      self.criterion = nil            -- should be nxn.Criterion
+      
+      self.meanoverset = nil          -- should be a torch.Tensor() of the same type as the network input
+      self.datasetdir = nil           -- should be a '/path/to/dataset'
+      self.trainset = nil             -- should be a {first, last}
+      self.trainsetsize = nil         -- should be last - first + 1
+      self.testset = nil              -- should be a {first, last}
+      self.batchsize = nil            -- should be an integer
+      
+      self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
+      self.checkpointname = nil       -- should be a 'filename'
+      
+      self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
+      
+      -- optional stuff
+      self.momentum = 0               -- should be between 0 and 1
+      self.learningrate = 0           -- optional, but if you want to train... well, you know.
+      self.lrdecay = 0                -- will decay like : LR(t) = learningrate / ( 1 + lrdecay * number of batches seen by the net )
+      self.weightdecay = 0            -- will put a L2-norm penalty on the weights
+      
+      self.constantinputsize = false  -- jittering will only happen if the inputs are of constant size (still have to think if this constraint should be necessary)
+      self.inputsize = nil
+      self.jittering = nil
+      self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
+      self.horizontalflip = false     -- should be true or false, will flip horizontally your input before feeding them to the net
+      
+      self.epochshuffle = false       -- should be true or false (shuffle the minibatch order at the beginning of each epoch)
+      self.epochcount = 0             -- where the network is at
+      self.batchcount = 0             -- where the network is at
+      self.gradupperbound = nil       -- L2-norm constraint on the gradients : if a gradient violates the constraint, it will be projected on the L2 unit-ball
+      
+      self.nclasses = nil             -- number of classes of the net output
+      self.confusion = nil            -- confusion matrix, useful for monitoring the training
+      
+      self.costvalues = {}             -- we want to store the values of the cost during training
+      self.testcostvalues = {}         -- we want to store the values of the cost during test passes
+      
+      self.lasttraincall = {}
 end
 
 
@@ -81,7 +83,7 @@ end
 
 function NeuralNet:setTrainsetRange(first, last)
    self.trainset={first, last}
-   self.trainsetsize=last-first
+   self.trainsetsize=last-first+1
    
 end
 
@@ -198,24 +200,53 @@ function NeuralNet:showL1Filters()
 end
 
 
+
+function nxn.NeuralNet:plotError()
+   require 'gnuplot'
+   local npoints=#self.costvalues
+   local costvector=torch.Tensor(npoints)
+   for i=1,npoints do
+      costvector[{i}]=self.costvalues[i][3]
+   end
+   
+   local ntestpoints=#self.testcostvalues
+   local testcostvector=torch.Tensor(ntestpoints)
+   local testcostindices=torch.Tensor(ntestpoints)
+   
+   for i=1,ntestpoints do
+      testcostvector[{i}]=self.testcostvalues[i][2]
+      testcostindices[{i}]=self.testcostvalues[i][1]
+   end
+   
+   gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Validation set cost', testcostindices/self.trainsetsize, testcostvector,'-'})
+   
+end
+
+
+function NeuralNet:resume()
+   self:train(self.lasttraincall[1],self.lasttraincall[2],self.lasttraincall[3])
+end
+
+
 function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
+   self.lasttraincall={nepochs, savefrequency, measurementsfrequency}
    -- do a lot of tests and return errors if necessary :
    if not nepochs then
       error('NeuralNet:train(n [, fsave, fmeas]), will train until epoch n is reached (starts at 0), save every fsave batches, take measurements every fmeas batches (you can set these to nil)') 
    end
-
+   
    if not self.network then
       error('no network : use NeuralNet:setNetwork(net)') 
    end
-
+   
    if not self.criterion then
       error('no criterion : use NeuralNet:setCriterion(criterion)') 
    end
-
+   
    if not self.datasetdir then
       print('no dataset folder : use NeuralNet:setDatasetdir("/path/to/dataset"), or write your own NeuralNet:getBatch(idx) function') 
    end
-
+   
    if not self.trainset then
       error('no training set range : use NeuralNet:setTrainsetRange(first, last)') 
    end
@@ -295,7 +326,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       end
       
       print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/self.batchsize..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
-      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
+         table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
       self.confusion:zero()
       time:reset()
       
