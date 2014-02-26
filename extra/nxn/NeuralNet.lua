@@ -109,7 +109,7 @@ end
 
 
 function NeuralNet:saveNet()
-   torch.save(paths.concat(self.checkpointdir, self.savefilename), self)
+   torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
 end
 
 function NeuralNet:setEpochShuffle(epochshuffle)
@@ -192,12 +192,13 @@ function NeuralNet:getNumBatchesSeen()
 end
 
 
-function NeuralNet:showL1Filters()
+function nxn.NeuralNet:showL1Filters()
    local p,g = self.network:parameters()
    foo=p[1]:float()
    foo=foo:transpose(3,4):transpose(1,2):transpose(2,3)
-   image.display({image=foo, zoom=3}) 
+   image.display({image=foo, zoom=3, padding=1}) 
 end
+
 
 
 
@@ -269,7 +270,8 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    
    
    
-   
+   -- put all modules in train mode (useful for dropout)
+   self.network:setTestMode(false)
    
    
    
@@ -298,8 +300,9 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       if self.horizontalflip and torch.bernoulli(0.5)==1 then
          local input2=input:clone()
-         for xx=1, originalimgsize do
-            input:select(3,xx):copy(input2:select(3, self.inputsize[1]+1-xx))
+         local width = input:size(3)
+         for xx=1, width do
+            input:select(3,xx):copy(input2:select(3, width+1-xx))
          end
       end
       
@@ -366,6 +369,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
             self:showL1Filters()
+            self:plotError()
             
             for idx=1,#params do 
                --print('param id : '.. idx)
@@ -378,21 +382,23 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
             
             local meancost=0
             -- run on validation set :
+            self.network:setTestMode(true)
             for valbatchidx=self.testset[1],self.testset[2] do
                local valbatch,valtarget=self:getTestBatch(valbatchidx)  
                local jitteredvalinput = valbatch
-               if constantinputsize then
-                  jitteredvalinput = valbatch:narrow(2,math.floor(1+self.jittering[2]/2), self.inputsize[2] - math.floor(self.jittering[2]/2)):narrow(3,math.floor(1+self.jittering[1]/2), self.inputsize[1] - math.floor(self.jittering[1]/2))
+               if self.constantinputsize then
+                  jitteredvalinput = valbatch:narrow(2,math.floor(1+self.jittering[2]/2), self.inputsize[2] -self.jittering[2]):narrow(3,math.floor(1+self.jittering[1]/2), self.inputsize[1] - self.jittering[1])
                end
                self.network:forward(jitteredvalinput)
                self.criterion:forward(self.network.output, valtarget)
-               meancost=meancost+crit.output
+               meancost=meancost+self.criterion.output
                if self.network.output:dim()==2 then
                   for k=1,batchsize do
                      self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
                   end
                end
             end
+            self.network:setTestMode(false)
             meancost=meancost/(self.testset[2]-self.testset[1]+1)/self.batchsize
             self.confusion:updateValids()
             print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
@@ -404,42 +410,13 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       if savefrequency then
          if math.mod(self:getNumBatchesSeen()-1,savefrequency)==0 then
-            self:save()
+            self:saveNet()
          end
       end
       
       
    end
 end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

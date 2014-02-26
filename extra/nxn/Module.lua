@@ -121,6 +121,18 @@ function Module:type(type)
    return self
 end
 
+function Module:setTestMode(testbool)
+   -- find submodules in classic containers 'modules'
+   if self.testmode~=nil then self.testmode=testbool end
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         if module.setTestMode then module:setTestMode(testbool) end
+      end
+   end
+   return self
+end
+
+
 function Module:float()
    return self:type('torch.FloatTensor')
 end
