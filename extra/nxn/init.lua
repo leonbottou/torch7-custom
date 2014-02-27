@@ -15,6 +15,7 @@ include('SpatialMaxPooling.lua')
 include('CrossMapNormalization.lua')
 include('SoftMax.lua')
 include('NeuralNet.lua')
+include('Jitter.lua')
 
 include('Linear.lua')
 include('Reshape.lua')

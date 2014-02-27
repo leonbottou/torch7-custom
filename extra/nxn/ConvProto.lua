@@ -43,7 +43,7 @@ function ConvProto:reset(stdv)
    self.bias:mul(stdv)
 end
 
-function ConvProto:reset(stdv)
+function ConvProto:resetuniform(stdv)
    if stdv then
       stdv = stdv * math.sqrt(3)
    else
