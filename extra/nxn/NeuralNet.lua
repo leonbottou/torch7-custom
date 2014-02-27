@@ -378,7 +378,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       end
       
       if savefrequency then
-         if math.mod(self:getNumBatchesSeen()-1,savefrequency)==0 then
+         if math.mod(self:getNumBatchesSeen(),savefrequency)==0 then
             self:saveNet()
          end
       end
