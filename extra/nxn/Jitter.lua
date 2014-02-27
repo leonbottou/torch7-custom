@@ -12,7 +12,7 @@ function Jitter:__init(xcrop, ycrop, flip)
    end
 end
 
-function Jitter:updateOutput(input)
+function Jitter:updateOutputLua(input)
    self.xstart=math.random(1,self.xcrop)
    self.ystart=math.random(1,self.ycrop)
    self.randflip=torch.bernoulli(0.5)

@@ -17,11 +17,11 @@ static int nxn_(Jitter_updateOutput)(lua_State *L)
   int outx = input->size[2] - xcrop;
   int channels = input->size[3];
   
+  THTensor_(resize4d)(output, bs, outy, outx, channels);
+
   real* idata = THTensor_(data)(input);
   real* odata = THTensor_(data)(output);
-  
-  THTensor_(resize4d)(output, bs, outy, outx, channels);
-  
+
   int istr0 = input->stride[0];
   int istr1 = input->stride[1];
   int istr2 = input->stride[2];
@@ -31,22 +31,21 @@ static int nxn_(Jitter_updateOutput)(lua_State *L)
   int ostr1 = output->stride[1];
   int ostr2 = output->stride[2];
   int ostr3 = output->stride[3];
-  
+
   /* This is jittering + hflip */
-  
+  int batchidx, y, x, ch;
   if(hflip==1)
   {
      #pragma omp parallel for private(batchidx)
-     for(int batchidx=0; batchidx<bs; batchidx++)
+     for(batchidx=0; batchidx<bs; batchidx++)
      {
-        #pragma omp parallel for private(y)
-        for (int y = 0; y<outy; y++)
+        for (y = 0; y<outy; y++)
         {
-            for(int x = 0; x<outx; x++)
+            for(x = 0; x<outx; x++)
             {
-               for (int ch = 0: ch < channels; ch++)
+               for (ch = 0; ch < channels; ch++)
                {
-                   odata[batchidx*ostr0 + y*ostr1 + x*ostr2 + ch*ostr3] = idata[batchidx*istr0 + (y+ystart-1)*istr1 + (xstart+outx-x-1)*istr2 + ch*istr3];
+                   odata[batchidx*ostr0 + y*ostr1 + x*ostr2 + ch*ostr3] = idata[batchidx*istr0 + (y+ystart-1)*istr1 + (xstart-1+outx-1-x)*istr2 + ch*istr3];
                }
             }
         }
@@ -56,14 +55,13 @@ static int nxn_(Jitter_updateOutput)(lua_State *L)
   /* This is only jittering */
   {
      #pragma omp parallel for private(batchidx)
-     for(int batchidx=0; batchidx<bs; batchidx++)
+     for(batchidx=0; batchidx<bs; batchidx++)
      {
-        #pragma omp parallel for private(y)
-        for (int y = 0; y<outy; y++)
+        for (y = 0; y<outy; y++)
         {
-            for(int x = 0; x<outx; x++)
+            for(x = 0; x<outx; x++)
             {
-               for (int ch = 0: ch < channels; ch++)
+               for (ch = 0; ch < channels; ch++)
                {
                    odata[batchidx*ostr0 + y*ostr1 + x*ostr2 + ch*ostr3] = idata[batchidx*istr0 + (y+ystart-1)*istr1 + (x+xstart-1)*istr2 + ch*istr3];
                }

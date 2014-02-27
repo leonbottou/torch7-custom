@@ -298,26 +298,9 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       local input, target = self:getBatch(batchidx)
       
-      if self.horizontalflip and torch.bernoulli(0.5)==1 then
-         local input2=input:clone()
-         local width = input:size(3)
-         for xx=1, width do
-            input:select(3,xx):copy(input2:select(3, width+1-xx))
-         end
-      end
-      
-      local jitteredinput = input
-      -- jitter/crop, only if inputsize is constant
-      if self.constantinputsize then
-         -- crop pixels on whole batch
-         local xstart=math.random(1,self.jittering[1])
-         local ystart=math.random(1,self.jittering[2])
-         jitteredinput = input:narrow(2,ystart,(self.inputsize[2]-self.jittering[2])):narrow(3,xstart,(self.inputsize[1]-self.jittering[1]))
-      end
-      
       
       -- forward 
-      self.network:forward(jitteredinput)
+      self.network:forward(input)
       self.criterion:forward(self.network.output, target)
       
       -- confusion : only interesting for classification
@@ -348,7 +331,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       end
       
       -- compute and accumulate gradients
-      self.network:backward(jitteredinput, df_do, currentlr/self.batchsize)
+      self.network:backward(input, df_do, currentlr/self.batchsize)
       
       -- apply weight decay :
       for idx=1,#gradients do
@@ -385,11 +368,8 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
             self.network:setTestMode(true)
             for valbatchidx=self.testset[1],self.testset[2] do
                local valbatch,valtarget=self:getTestBatch(valbatchidx)  
-               local jitteredvalinput = valbatch
-               if self.constantinputsize then
-                  jitteredvalinput = valbatch:narrow(2,math.floor(1+self.jittering[2]/2), self.inputsize[2] -self.jittering[2]):narrow(3,math.floor(1+self.jittering[1]/2), self.inputsize[1] - self.jittering[1])
-               end
-               self.network:forward(jitteredvalinput)
+               
+               self.network:forward(valbatch)
                self.criterion:forward(self.network.output, valtarget)
                meancost=meancost+self.criterion.output
                if self.network.output:dim()==2 then
