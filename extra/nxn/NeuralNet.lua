@@ -34,9 +34,6 @@ function NeuralNet:__init()
       self.lrdecay = 0                -- will decay like : LR(t) = learningrate / ( 1 + lrdecay * number of batches seen by the net )
       self.weightdecay = 0            -- will put a L2-norm penalty on the weights
       
-      self.constantinputsize = false  -- jittering will only happen if the inputs are of constant size (still have to think if this constraint should be necessary)
-      self.inputsize = nil
-      self.jittering = nil
       self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
       self.horizontalflip = false     -- should be true or false, will flip horizontally your input before feeding them to the net
       
@@ -147,14 +144,6 @@ function NeuralNet:setGradupperbound(gradupperbound)
    self.gradupperbound=gradupperbound
 end
 
-
-function NeuralNet:setInputsize(inputsize, jittering)
-   -- inputsize and jittering are always (x,y)
-   -- but batches are (batchsize, y, x, channel)
-   self.constantinputsize=true
-   self.inputsize = inputsize
-   self.jittering = jittering
-end
 
 function NeuralNet:setHorizontalflip(horizontalflip)
    self.horizontalflip=horizontalflip
