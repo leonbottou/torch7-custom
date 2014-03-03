@@ -191,7 +191,7 @@ end
 
 
 
-function nxn.NeuralNet:plotError()
+function NeuralNet:plotError()
    require 'gnuplot'
    local npoints=#self.costvalues
    local costvector=torch.Tensor(npoints)
@@ -208,8 +208,11 @@ function nxn.NeuralNet:plotError()
       testcostindices[{i}]=self.testcostvalues[i][1]
    end
    
+   if ntestpoints>0 then
    gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Validation set cost', testcostindices/self.trainsetsize, testcostvector,'-'})
-   
+   else
+      gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'})
+   end
 end
 
 
@@ -340,7 +343,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
-            self:showL1Filters()
+            if self.epochcount==0 then self:showL1Filters() end
             self:plotError()
             
             for idx=1,#params do 

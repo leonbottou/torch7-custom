@@ -13,6 +13,8 @@
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X,Y) ((X) < (Y) ? (Y) : (X))
 
+
+
 /* -------------------------------------- */
 /* Generic convolution routines           */
 /* -------------------------------------- */
@@ -824,10 +826,64 @@ int it1;
   
 }
 
+static int nxn_(ConvProto_clipWeights)(lua_State *L)
+{
+  real normbound = luaL_optnumber(L, 2, 1);
+  THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  int ip = weight->size[3];
+  
+  int str0 = weight->stride[0];
+  int str1 = weight->stride[1];
+  int str2 = weight->stride[2];
+  int str3 = weight->stride[3];
+  
+  int ii0,ii1,ii2,ii3;
+  real* wdata=THTensor_(data)(weight);
+  
+  #pragma omp parallel for private ii1
+  for (ii1=0; ii1<op; ii1++)
+  {
+     real filternorm=0
+     for (ii0=0; ii0<kh; ii0++)
+     {
+        for (ii2=0; ii2<kw; ii2++)
+        {
+           for (ii3=0; ii3<ip; ii3++)
+           {
+               filternorm+=wdata[ii0*str0+ii1*str1+ii2*str2+ii3*str3]*wdata[ii0*str0+ii1*str1+ii2*str2+ii3*str3];
+           }
+        }  
+     }
+
+     if (filternorm>normbound*normbound)
+     {
+         real scalefactor=normbound/sqrt(filternorm);
+         for (ii0=0; ii0<kh; ii0++)
+         {
+            for (ii2=0; ii2<kw; ii2++)
+            {
+               for (ii3=0; ii3<ip; ii3++)
+               {
+                   wdata[ii0*str0+ii1*str1+ii2*str2+ii3*str3] *= scalefactor;
+               }
+            }  
+         }
+     }
+
+  }
+  
+}
+
+
 static const struct luaL_Reg nxn_(ConvProto__) [] = {
   {"ConvProto_updateOutput", nxn_(ConvProto_updateOutput)},
   {"ConvProto_updateGradInput", nxn_(ConvProto_updateGradInput)},
   {"ConvProto_accGradParameters", nxn_(ConvProto_accGradParameters)},
+  {"ConvProto_clipWeights", nxn_(ConvProto_clipWeights)},
   {NULL, NULL}
 };
 

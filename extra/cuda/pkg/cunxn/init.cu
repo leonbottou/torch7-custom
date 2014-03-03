@@ -31,6 +31,7 @@ int luaopen_libcunxn(lua_State *L)
   cunxn_SpatialGlobalMaxPooling_init(L);
   cunxn_testSgemm_init(L);
   cunxn_ConvProto_init(L);
+  cunxn_Dropmap_init(L);
 
   return 1;
 }

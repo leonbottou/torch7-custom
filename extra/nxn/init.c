@@ -17,6 +17,9 @@
 #include "generic/Jitter.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/Dropmap.c"
+#include "THGenerateFloatTypes.h"
+
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libnxn(lua_State *L);
 
@@ -31,6 +34,9 @@ int luaopen_libnxn(lua_State *L)
 
   nxn_FloatJitter_init(L);
   nxn_DoubleJitter_init(L);
+
+  nxn_FloatDropmap_init(L);
+  nxn_DoubleDropmap_init(L);
 
   nxn_FloatSpatialConvolution_init(L);
   nxn_DoubleSpatialConvolution_init(L);

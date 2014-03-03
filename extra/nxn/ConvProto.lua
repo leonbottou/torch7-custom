@@ -85,3 +85,20 @@ function ConvProto:accGradParameters(input, gradOutput, scale)
     input.nxn.ConvProto_accGradParameters(self, input, gradOutput, scale) 
 --    return 
 end
+
+
+
+function ConvProto:clipWeights(normbound)
+   for idx=1,self.nOutputPlane do
+      local filternorm=self.weight:select(2,idx):norm()
+      if filternorm > normbound then
+         self.weight:select(2,idx):mul(normbound/filternorm)
+      end
+   end
+end
+
+function ConvProto:clipWeights(normbound)
+   input.nxn.ConvProto_clipWeights(self, normbound)
+end
+
+

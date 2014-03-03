@@ -1400,11 +1400,84 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
 
 
 
+__global__ void clipWeightsKernel(float* wdata, float normbound, int kh, int op, int kw, int ip, int str0, int str1)
+{
+   /* blockIdx.x  = [ 0, op    ] ()
+      threadIdx.x = [ 0, 31    ] ()
+   */
+
+   wdataptr += blockIdx.x*str1;
+
+   __shared__ float sqrsums[32];
+   int ith, it;
+   float sqrsum=0;
+   float current;
+   int numelperline=kw*ip;
+   for (ith=0; ith<kh; ith++)
+      for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
+      {
+         current=wdataptr[ith*str0+i];
+         sqrsum+=current*current;
+      }
+   }
+
+   sqrsums[threadIdx.x]=sqrsum;
+   
+   if (threadIdx.x < 16)
+   {
+      sqrsums[tid] += sqrsums[threadIdx.x + 16];
+      sqrsums[tid] += sqrsums[threadIdx.x + 8];
+      sqrsums[tid] += sqrsums[threadIdx.x + 4];
+      sqrsums[tid] += sqrsums[threadIdx.x + 2];
+   }
+
+   if (threadIdx.x == 0)
+   {
+      sqrsum = sqrsums[0]+sqrsums[1];
+   }
+   
+   sqrsum = __shfl(sqrsum, 0);
+   
+   if(sqrsum>normbound*normbound)
+   {
+      float scale = normbound/sqrt(sqrsum); 
+      for (ith=0; ith<kh; ith++)
+         for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
+         {
+            wdataptr[ith*str0+i] *= scale;
+         }
+      }
+   }
+}
 
 
 
 
 
+static int cunxn_ConvProto_clipWeights(lua_State *L)
+{
+  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
+  float normbound = luaL_optnumber(L, 2, 1);
+
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  int ip = weight->size[3];
+  
+  int str0 = weight->stride[0];
+  int str1 = weight->stride[1];
+  int str2 = weight->stride[2];
+  int str3 = weight->stride[3];
+
+  float* wdata=THCudaTensor_data(weight);
+
+  dim3 blocks(op);
+  dim3 threads(32);
+  
+  clipWeightsKernel <<<blocks, threads>>>(wdata, normbound, kh, op, kw, ip, str0, str1);
+
+  return 1;
+}
 
 
 
@@ -1415,6 +1488,7 @@ static const struct luaL_Reg cunxn_ConvProto__ [] = {
   {"ConvProto_updateOutput", cunxn_ConvProto_updateOutput},
   {"ConvProto_updateGradInput", cunxn_ConvProto_updateGradInput},
   {"ConvProto_accGradParameters", cunxn_ConvProto_accGradParameters},
+  {"ConvProto_clipWeights", cunxn_ConvProto_clipWeights},
   {NULL, NULL}
 };
 
