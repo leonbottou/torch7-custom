@@ -79,7 +79,9 @@ static int nxn_(Dropmap_updateGradInput)(lua_State *L)
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
   THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
   THTensor *mask = luaT_getfieldcheckudata(L, 1, "mask", torch_Tensor);
-  
+
+  float sameoverbatch = luaT_getfieldchecknumber(L, 1, "sameoverbatch");  
+
   THTensor_(resizeAs)(gradInput, gradOutput);
 
   int bs   = gradOutput->size[0];
@@ -145,8 +147,8 @@ static int nxn_(Dropmap_updateGradInput)(lua_State *L)
 }
 
 static const struct luaL_Reg nxn_(Dropmap__) [] = {
-  {"ReLU_updateOutput", nxn_(Dropmap_updateOutput)},
-  {"ReLU_updateGradInput", nxn_(Dropmap_updateGradInput)},
+  {"Dropmap_updateOutput", nxn_(Dropmap_updateOutput)},
+  {"Dropmap_updateGradInput", nxn_(Dropmap_updateGradInput)},
   {NULL, NULL}
 };
 

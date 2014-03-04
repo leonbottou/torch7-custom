@@ -841,13 +841,14 @@ static int nxn_(ConvProto_clipWeights)(lua_State *L)
   int str2 = weight->stride[2];
   int str3 = weight->stride[3];
   
-  int ii0,ii1,ii2,ii3;
+  int ii1;
   real* wdata=THTensor_(data)(weight);
   
-  #pragma omp parallel for private ii1
+  #pragma omp parallel for private(ii1)
   for (ii1=0; ii1<op; ii1++)
   {
-     real filternorm=0
+     int ii0,ii2,ii3;
+     real filternorm=0;
      for (ii0=0; ii0<kh; ii0++)
      {
         for (ii2=0; ii2<kw; ii2++)
@@ -875,6 +876,8 @@ static int nxn_(ConvProto_clipWeights)(lua_State *L)
      }
 
   }
+  
+  return 1;
   
 }
 

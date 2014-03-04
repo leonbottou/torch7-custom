@@ -132,6 +132,17 @@ function Module:setTestMode(testbool)
    return self
 end
 
+function Module:setInPlace(inplacebool)
+   -- find submodules in classic containers 'modules'
+   if self.inplace~=nil then self.inplace=inplacebool end
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         if module.setInPlace then module:setInPlace(inplacebool) end
+      end
+   end
+   return self
+end
+
 
 function Module:float()
    return self:type('torch.FloatTensor')

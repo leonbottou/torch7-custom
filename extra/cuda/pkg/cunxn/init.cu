@@ -15,6 +15,7 @@
 #include "SpatialGlobalMaxPooling.cu"
 #include "testSgemm.cu"
 #include "ConvProto.cu"
+#include "Dropmap.cu"
 
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunxn(lua_State *L);

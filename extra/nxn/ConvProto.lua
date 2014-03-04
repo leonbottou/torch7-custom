@@ -98,7 +98,7 @@ function ConvProto:clipWeights(normbound)
 end
 
 function ConvProto:clipWeights(normbound)
-   input.nxn.ConvProto_clipWeights(self, normbound)
+   self.weight.nxn.ConvProto_clipWeights(self, normbound)
 end
 
 

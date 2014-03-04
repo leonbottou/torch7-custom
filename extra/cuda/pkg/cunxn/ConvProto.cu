@@ -1400,7 +1400,7 @@ static int cunxn_ConvProto_accGradParameters(lua_State *L)
 
 
 
-__global__ void clipWeightsKernel(float* wdata, float normbound, int kh, int op, int kw, int ip, int str0, int str1)
+__global__ void clipWeightsKernel(float* wdataptr, float normbound, int kh, int op, int kw, int ip, int str0, int str1)
 {
    /* blockIdx.x  = [ 0, op    ] ()
       threadIdx.x = [ 0, 31    ] ()
@@ -1408,12 +1408,13 @@ __global__ void clipWeightsKernel(float* wdata, float normbound, int kh, int op,
 
    wdataptr += blockIdx.x*str1;
 
-   __shared__ float sqrsums[32];
-   int ith, it;
+   volatile __shared__ float sqrsums[32];
+   int ith, it, i;
    float sqrsum=0;
    float current;
    int numelperline=kw*ip;
    for (ith=0; ith<kh; ith++)
+   {
       for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
       {
          current=wdataptr[ith*str0+i];
@@ -1423,28 +1424,48 @@ __global__ void clipWeightsKernel(float* wdata, float normbound, int kh, int op,
 
    sqrsums[threadIdx.x]=sqrsum;
    
+   // NVCC : Y U NO __SHFL ?
    if (threadIdx.x < 16)
    {
-      sqrsums[tid] += sqrsums[threadIdx.x + 16];
-      sqrsums[tid] += sqrsums[threadIdx.x + 8];
-      sqrsums[tid] += sqrsums[threadIdx.x + 4];
-      sqrsums[tid] += sqrsums[threadIdx.x + 2];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 16];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 8];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 4];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 2];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 1];
+      sqrsums[threadIdx.x + 1] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 2] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 4] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 8] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 16] = sqrsums[threadIdx.x];
    }
 
+   sqrsum=sqrsums[threadIdx.x];   
+
+
+   // replace with this when __shfl works :
+   /*if (threadIdx.x < 16)
+   {
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 16];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 8];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 4];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 2];
+   }
    if (threadIdx.x == 0)
    {
       sqrsum = sqrsums[0]+sqrsums[1];
    }
    
-   sqrsum = __shfl(sqrsum, 0);
+   sqrsum = __shfl(sqrsum, 0);*/
    
    if(sqrsum>normbound*normbound)
    {
       float scale = normbound/sqrt(sqrsum); 
       for (ith=0; ith<kh; ith++)
+      {
          for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
          {
             wdataptr[ith*str0+i] *= scale;
+            //wdataptr[ith*str0+i] =0; // for testing...
          }
       }
    }

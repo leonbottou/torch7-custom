@@ -181,6 +181,6 @@ static const struct luaL_Reg cunxn_Dropmap__ [] = {
 static void cunxn_Dropmap_init(lua_State *L)
 {
   luaT_pushmetatable(L, "torch.CudaTensor");
-  luaT_registeratname(L, cunxn_ReLU__, "nxn");
+  luaT_registeratname(L, cunxn_Dropmap__, "nxn");
   lua_pop(L,1);
 }
