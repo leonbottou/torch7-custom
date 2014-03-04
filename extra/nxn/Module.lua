@@ -143,6 +143,16 @@ function Module:setInPlace(inplacebool)
    return self
 end
 
+function Module:clipWeights(normbound)
+   -- find submodules in classic containers 'modules'
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         if module.clipWeights then module:clipWeights(normbound) end
+      end
+   end
+   return self
+end
+
 
 function Module:float()
    return self:type('torch.FloatTensor')

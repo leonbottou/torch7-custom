@@ -76,5 +76,15 @@ function Linear:accGradParameters(input, gradOutput, scale)
 
 end
 
+
+-- turns out Linear is compatible with ConvProto, and ConvProto is already optimized...
+function Linear:clipWeights(normbound)
+   local nout=self.weight:size(1)
+   local nin=self.weight:size(2)
+   self.weight:resize(1,nout,1,nin)
+   nxn.ConvProto.clipWeights(self, normbound)
+   self.weight:resize(nout,nin)
+end
+
 -- we do not need to accumulate parameters when sharing
 Linear.sharedAccUpdateGradParameters = Linear.accUpdateGradParameters
