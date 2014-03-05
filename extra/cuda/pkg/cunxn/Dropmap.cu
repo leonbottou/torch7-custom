@@ -1,15 +1,14 @@
-
-__global__ void DropmapKernel(float* idata, float* odata, float* maskdata, int iw, int str0, int str1, int str2, int ip)
+__global__ void DropmapKernel(float* idata, float* odata, float* maskdata, int ih, int iw, int str0, int str1, int str2, int ip)
 {
    /* blockIdx.z  = [ 0, bs    ] ()
       blockIdx.x  = [ 0, ceil(ip/32) ] ()
       threadIdx.x = [ 0, 31    ] ()
-      threadIdx.y = [ 0, ih    ] ()
+      threadIdx.y = [ 0, 31    ] ()
    */
 
    const int planeidx=blockIdx.x*blockDim.x+threadIdx.x;
-   idata += blockIdx.z*str0 + threadIdx.y*str1;
-   odata += blockIdx.z*str0 + threadIdx.y*str1;
+   idata += blockIdx.z*str0;
+   odata += blockIdx.z*str0;
 
    __shared__ float mask[32];
    float localmask=0;
@@ -29,34 +28,37 @@ __global__ void DropmapKernel(float* idata, float* odata, float* maskdata, int i
    {
       localmask=mask[threadIdx.x];
    }
-   
+
    int w;
+   int h;
    float v;
 
    if(planeidx<ip)
    {
-      for (w=0; w<iw; w++)
+      for(h=threadIdx.y; h<ih; h+=blockDim.y)
       {
-         v = idata[w*str2+planeidx];
-         v = (localmask==1) ? v : 0;
-         odata[w*str2+planeidx] = v;
+         for (w=0; w<iw; w++)
+         {
+            v = idata[h*str1+w*str2+planeidx];
+            v = (localmask==1) ? v : 0;
+            odata[h*str1+w*str2+planeidx] = v;
+         }
       }
    }
    
 }
 
-
-__global__ void DropmapKernelSame(float* idata, float* odata, float* maskdata, int iw, int str0, int str1, int str2, int ip)
+__global__ void DropmapKernelSame(float* idata, float* odata, float* maskdata, int ih, int iw, int str0, int str1, int str2, int ip)
 {
    /* blockIdx.z  = [ 0, bs    ] ()
       blockIdx.x  = [ 0, ceil(ip/32) ] ()
       threadIdx.x = [ 0, 31    ] ()
-      threadIdx.y = [ 0, ih    ] ()
+      threadIdx.y = [ 0, 31    ] ()
    */
 
    const int planeidx=blockIdx.x*blockDim.x+threadIdx.x;
-   idata += blockIdx.z*str0 + threadIdx.y*str1;
-   odata += blockIdx.z*str0 + threadIdx.y*str1;
+   idata += blockIdx.z*str0;
+   odata += blockIdx.z*str0;
 
    __shared__ float mask[32];
    float localmask=0;
@@ -76,17 +78,21 @@ __global__ void DropmapKernelSame(float* idata, float* odata, float* maskdata, i
    {
       localmask=mask[threadIdx.x];
    }
-   
+
    int w;
+   int h;
    float v;
 
    if(planeidx<ip)
    {
-      for (w=0; w<iw; w++)
+      for(h=threadIdx.y; h<ih; h+=blockDim.y)
       {
-         v = idata[w*str2+planeidx];
-         v = (localmask==1) ? v : 0;
-         odata[w*str2+planeidx] = v;
+         for (w=0; w<iw; w++)
+         {
+            v = idata[h*str1+w*str2+planeidx];
+            v = (localmask==1) ? v : 0;
+            odata[h*str1+w*str2+planeidx] = v;
+         }
       }
    }
    
@@ -118,16 +124,22 @@ static int cunxn_Dropmap_updateOutput(lua_State *L)
   float* maskdata=THCudaTensor_data(mask);
 
   dim3 blocks((ip+31)/32, 1, bs);
-  dim3 threads(32,ih);
+  dim3 threads(32,32);
   
   if(sameoverbatch==1)
   {
-     DropmapKernelSame <<<blocks,threads>>>(idata, odata, maskdata, iw, str0, str1, str2, ip);
+     DropmapKernelSame <<<blocks,threads>>>(idata, odata, maskdata, ih, iw, str0, str1, str2, ip);
   }
   else 
   {
-     DropmapKernel <<<blocks,threads>>>(idata, odata, maskdata, iw, str0, str1, str2, ip);
+     DropmapKernel <<<blocks,threads>>>(idata, odata, maskdata, ih, iw, str0, str1, str2, ip);
   }
+  
+  cudaError_t err = cudaGetLastError();
+
+    if (err != cudaSuccess) {
+        fprintf(stderr, "error in dropmap forward=%s\n", cudaGetErrorString(err));
+    }
 
   return 1;
 }
@@ -158,15 +170,15 @@ static int cunxn_Dropmap_updateGradInput(lua_State *L)
   float* maskdata=THCudaTensor_data(mask);
 
   dim3 blocks((ip+31)/32, 1, bs);
-  dim3 threads(32,ih);
+  dim3 threads(32,32);
   
   if(sameoverbatch==1)
   {
-     DropmapKernelSame <<<blocks,threads>>> (godata, gidata, maskdata, iw, str0, str1, str2, ip);
+     DropmapKernelSame <<<blocks,threads>>> (godata, gidata, maskdata, ih, iw, str0, str1, str2, ip);
   }
   else 
   {
-     DropmapKernel <<<blocks,threads>>> (godata, gidata, maskdata, iw, str0, str1, str2, ip);
+     DropmapKernel <<<blocks,threads>>> (godata, gidata, maskdata, ih, iw, str0, str1, str2, ip);
   }
 
   return 1;

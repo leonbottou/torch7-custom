@@ -41,6 +41,7 @@ function NeuralNet:__init()
       self.epochcount = 0             -- where the network is at
       self.batchcount = 0             -- where the network is at
       self.gradupperbound = nil       -- L2-norm constraint on the gradients : if a gradient violates the constraint, it will be projected on the L2 unit-ball
+      self.weightupperbound = nil     -- L2-norm constraint on the weights : if a filter violates the constraint, it will be projected on the L2 unit-ball
       
       self.nclasses = nil             -- number of classes of the net output
       self.confusion = nil            -- confusion matrix, useful for monitoring the training
@@ -144,6 +145,9 @@ function NeuralNet:setGradupperbound(gradupperbound)
    self.gradupperbound=gradupperbound
 end
 
+function NeuralNet:setWeightupperbound(weightupperbound)
+   self.weightupperbound=weightupperbound
+end
 
 function NeuralNet:setHorizontalflip(horizontalflip)
    self.horizontalflip=horizontalflip
@@ -339,7 +343,12 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
             end
          end
       end
+
       self.network:updateParameters(1)
+      
+      if self.weightupperbound then
+         self.network:clipWeights(self.weightupperbound)
+      end
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
