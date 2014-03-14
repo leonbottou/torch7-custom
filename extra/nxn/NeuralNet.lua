@@ -225,7 +225,103 @@ function NeuralNet:resume()
 end
 
 
-function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
+function nxn.NeuralNet:test()
+   local params, gradients =self.network:parameters()
+   local meancost=0
+   -- run on validation set :
+   self.network:setTestMode(true)
+   for valbatchidx=self.testset[1],self.testset[2] do
+      local valbatch,valtarget=self:getTestBatch(valbatchidx)  
+      
+      self.network:forward(valbatch)
+      self.criterion:forward(self.network.output, valtarget)
+      meancost=meancost+self.criterion.output
+      if self.network.output:dim()==2 then
+         for k=1,self.batchsize do
+            self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+         end
+      end
+   end
+   self.network:setTestMode(false)
+   meancost=meancost/(self.testset[2]-self.testset[1]+1)/self.batchsize
+   self.confusion:updateValids()
+   print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
+   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
+   self.confusion:zero()
+   
+end
+
+
+function nxn.NeuralNet:measure()
+   local params, gradients = self.network:parameters()
+   if self.epochcount==0 then self:showL1Filters() end
+   
+   for idx=1,#params do 
+      --print('param id : '.. idx)
+      local WorB
+      if math.mod(idx,2)==1 then WorB=' weight' else WorB=' bias' end
+      print('module '..math.ceil(idx/2)..WorB..' mean : '..(params[idx]:mean())..', grad mean : '..(gradients[idx]:mean()))
+      print('module '..math.ceil(idx/2)..WorB..' std  : '..(params[idx]:std())..', grad std  : '..(gradients[idx]:std()))
+      print(' ')
+   end
+end
+
+
+function nxn.NeuralNet:forwardprop(input, target, timer, batchidx)
+   self.network:forward(input)
+   self.criterion:forward(self.network.output, target)
+   
+   -- confusion : only interesting for classification
+   if self.network.output:dim()==2 then
+      for k=1,self.batchsize do
+         self.confusion:add(self.network.output[{k,{}}], target[{k}])
+      end
+      self.confusion:updateValids()
+   end
+   
+   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/self.batchsize..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
+      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
+   self.confusion:zero()
+
+end
+
+
+function nxn.NeuralNet:backpropUpdate(input, df_do, target, lr)
+   local params, gradients =self.network:parameters()
+   
+   -- apply momentum :
+   for idx=1,#gradients do 
+      gradients[idx]:mul(self.momentum)
+   end
+   
+   -- compute and accumulate gradients
+   self.network:backward(input, df_do, lr/self.batchsize)
+   
+   -- apply weight decay :
+   for idx=1,#gradients do
+      gradients[idx]:add(self.weightdecay*lr, params[idx])
+   end
+   
+   -- clip gradients
+   if self.gradupperbound then
+      for idx=1,#gradients do
+         local gnorm=gradients[idx]:norm()
+         if gnorm > self.gradupperbound then
+            gradients[idx]:mul(self.gradupperbound/gnorm)
+         end
+      end
+   end
+
+   self.network:updateParameters(1)
+   
+   if self.weightupperbound then
+      self.network:clipWeights(self.weightupperbound)
+   end
+end
+
+
+
+function nxn.NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    self.lasttraincall={nepochs, savefrequency, measurementsfrequency}
    -- do a lot of tests and return errors if necessary :
    if not nepochs then
@@ -266,15 +362,15 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    
    
    
-   -- put all modules in train mode (useful for dropout)
-   self.network:setTestMode(false)
-   
    
    
    
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
+      -- put all modules in train mode (useful for dropout)
+      self.network:setTestMode(false)
+
       -- init 
       if self.batchcount > self.trainsetsize then
          self.epochcount = self.epochcount + 1 
@@ -294,98 +390,21 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       local input, target = self:getBatch(batchidx)
       
-      
       -- forward 
-      self.network:forward(input)
-      self.criterion:forward(self.network.output, target)
-      
-      -- confusion : only interesting for classification
-      if self.network.output:dim()==2 then
-         for k=1,self.batchsize do
-            self.confusion:add(self.network.output[{k,{}}], target[{k}])
-         end
-         self.confusion:updateValids()
-      end
-      
-      print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/self.batchsize..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
-         table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
-      self.confusion:zero()
+      self:forwardprop(input, target, time, batchidx)
+
       time:reset()
       
-      
-      
-      
       -- backward :
-      
       local df_do=self.criterion:backward(self.network.output, target)
       local currentlr = self.learningrate / (1 + self.lrdecay * self:getNumBatchesSeen())
-      local params, gradients =self.network:parameters()
-      
-      -- apply momentum :
-      for idx=1,#gradients do 
-         gradients[idx]:mul(self.momentum)
-      end
-      
-      -- compute and accumulate gradients
-      self.network:backward(input, df_do, currentlr/self.batchsize)
-      
-      -- apply weight decay :
-      for idx=1,#gradients do
-         gradients[idx]:add(self.weightdecay*currentlr, params[idx])
-      end
-      
-      -- clip gradients
-      if self.gradupperbound then
-         for idx=1,#gradients do
-            local gnorm=gradients[idx]:norm()
-            if gnorm > self.gradupperbound then
-               gradients[idx]:mul(self.gradupperbound/gnorm)
-            end
-         end
-      end
-
-      self.network:updateParameters(1)
-      
-      if self.weightupperbound then
-         self.network:clipWeights(self.weightupperbound)
-      end
+      self:backpropUpdate(input, df_do, target, currentlr)
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
-            if self.epochcount==0 then self:showL1Filters() end
+            self:measure()
+            self:test()
             self:plotError()
-            
-            for idx=1,#params do 
-               --print('param id : '.. idx)
-               local WorB
-               if math.mod(idx,2)==1 then WorB=' weight' else WorB=' bias' end
-               print('module '..math.ceil(idx/2)..WorB..' mean : '..(params[idx]:mean())..', grad/LR mean : '..(gradients[idx]:mean()*currentlr))
-               print('module '..math.ceil(idx/2)..WorB..' std  : '..(params[idx]:std())..', grad/LR std  : '..(gradients[idx]:std()*currentlr))
-               print(' ')
-            end
-            
-            local meancost=0
-            -- run on validation set :
-            self.network:setTestMode(true)
-            for valbatchidx=self.testset[1],self.testset[2] do
-               local valbatch,valtarget=self:getTestBatch(valbatchidx)  
-               
-               self.network:forward(valbatch)
-               self.criterion:forward(self.network.output, valtarget)
-               meancost=meancost+self.criterion.output
-               if self.network.output:dim()==2 then
-                  for k=1,batchsize do
-                     self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
-                  end
-               end
-            end
-            self.network:setTestMode(false)
-            meancost=meancost/(self.testset[2]-self.testset[1]+1)/self.batchsize
-            self.confusion:updateValids()
-            print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
-            table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
-            self.confusion:zero()
-            
          end
       end
       
