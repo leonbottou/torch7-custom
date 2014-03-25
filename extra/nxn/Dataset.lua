@@ -10,6 +10,8 @@ local Dataset = torch.class('nxn.Dataset')
 -- note : if you want to use the example generator you have to build your dataset as a table of samples : 
 -- dataTable={sample1, sample2, sample3} where sample1={'path/to/image.jpg', label}
 
+-- if you want your dataset shuffled, do Dataset:shuffle() before generating stuff...
+
 function Dataset:__init()
    self.dataTable={}
    self.targetDir=nil
@@ -23,6 +25,7 @@ end
 
 function Dataset:setDataTable(dataTable)
    self.dataTable=dataTable
+   self.shuffle=torch.range(1,#self.dataTable)
 end
 
 function Dataset:setSizes(x,y)
@@ -55,29 +58,30 @@ function Dataset:generateSample(idx)
    return sample, torch.FloatTensor(1):fill(foo[2])
 end
 
+function Dataset:shuffle()
+   self.shuffle=torch.randperm(#self.dataTable)
+end
+
 function Dataset:resume()
-   self=torch.load(paths.concat(self.targetDir, 'dataGeneratorState.t7'))
+   local foo=torch.load(paths.concat(self.targetDir, 'dataGeneratorState.t7'))
+   self.dataTable=foo.dataTable
+   self.targetDir=foo.targetDir
+   self.batchSize=foo.batchSize
+   self.shuffle=foo.shuffle
+   self.meanoverset=foo.meanoverset
+   self.nextbatch=foo.nextbatch
+   self.x=foo.x
+   self.y=foo.y
    self:generateSet()
 end
 
-function Dataset:generateSet(shuffleorder)
-   shuffleorder=shuffleorder or 1
-   -- is it initialized ? if no, shuffle, and set self.nextbatch to 1
-   
-   local sampleExample,targetExample = self:generateSample(1)
-   
-   
-   if self.nextbatch==0 then
-      if shuffleorder==1 then 
-         self.shuffle=torch.randperm(#self.dataTable)
-      else
-         self.shuffle=torch.range(1,#self.dataTable)
-      end
-      self.meanoverset=torch.FloatTensor(#sampleExample):fill(0)
-      self.nextbatch=1
-   end
 
+function Dataset:generateBatch(batchidx)
+   local sampleExample,targetExample = self:generateSample(1)
    local numbatches=math.floor(#self.dataTable/self.batchSize)
+   if batchidx > numbatches then 
+      error('idx must be < numbatches (= '..numbatches..')')
+   end
    
    local sampleExampleDims=#(#sampleExample)
    local targetExampleDims=#(#targetExample)
@@ -95,19 +99,40 @@ function Dataset:generateSet(shuffleorder)
       batchTargetDims[1+d]=(#targetExample)[d]
    end
 
+   local sampleBatch=torch.ByteTensor(batchSampleDims)
+   local targetBatch=torch.FloatTensor(batchTargetDims)
+   
+   for imgidx=1,self.batchSize do
+      local currentidx=self.shuffle[(batchidx-1)*self.batchSize+imgidx]
+      local sample, target = self:generateSample(currentidx)
+      sampleBatch:select(1,imgidx):copy(sample)
+      targetBatch:select(1,imgidx):copy(target)
+   end
+   
+   --print('Batch '..batchidx..' : generated.')
+   
+   collectgarbage()   
+   return sampleBatch, targetBatch
+
+end
+
+
+
+function Dataset:generateSet()
+   local sampleExample,targetExample = self:generateSample(1)
+   
+   if self.nextbatch==0 then
+      self.meanoverset=torch.FloatTensor(#sampleExample):fill(0)
+      self.nextbatch=1
+   end
+
+   local numbatches=math.floor(#self.dataTable/self.batchSize)
 
    for batchidx=self.nextbatch,numbatches do 
-      local sampleBatch=torch.ByteTensor(batchSampleDims)
-      local targetBatch=torch.FloatTensor(batchTargetDims)
       
-      for imgidx=1,self.batchSize do
-         local currentidx=self.shuffle[(batchidx-1)*self.batchSize+imgidx]
-         local sample, target = self:generateSample(currentidx)
-         sampleBatch:select(1,imgidx):copy(sample)
-         targetBatch:select(1,imgidx):copy(target)
-      end
-      
-      batchfile={sampleBatch, targetBatch}
+      local sampleBatch, targetBatch
+      sampleBatch, targetBatch = self:generateBatch(batchidx)
+      local batchfile={sampleBatch, targetBatch}
       torch.save(paths.concat(self.targetDir, 'batch'..batchidx..'.t7'), batchfile)
       
       self.meanoverset:add(sampleBatch:float():mean(1):select(1,1))
