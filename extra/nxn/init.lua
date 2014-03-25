@@ -6,6 +6,8 @@ include('Sequential.lua')
 include('Column.lua')
 include('Copy.lua')
 
+include('Dataset.lua')
+
 include('ReLU.lua')
 include('Affine.lua')
 include('Dropout.lua')

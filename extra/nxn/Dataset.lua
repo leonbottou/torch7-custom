@@ -17,10 +17,17 @@ function Dataset:__init()
    self.shuffle=nil
    self.meanoverset=nil
    self.nextbatch=0
+   self.x=256
+   self.y=256
 end
 
 function Dataset:setDataTable(dataTable)
    self.dataTable=dataTable
+end
+
+function Dataset:setSizes(x,y)
+   self.x=x
+   self.y=y
 end
 
 function Dataset:setTargetDir(targetDir)
@@ -39,13 +46,13 @@ function Dataset:generateSample(idx)
    local img0=image.load(foo[1], 3, 'byte')
    
    local sample
-   if (#img0)[1]~=3 or (#img0)[2]~=256 or (#img0)[3]~=256 then
-      sample=image.scale(img0, 256, 256):transpose(1,2):transpose(2:3)
+   if (#img0)[1]~=3 or (#img0)[2]~=self.y or (#img0)[3]~=self.x then
+      sample=image.scale(img0, 256, 256):transpose(1,2):transpose(2,3)
    else
-      sample=img0:transpose(1,2):transpose(2:3)
+      sample=img0:transpose(1,2):transpose(2,3)
    end
    
-   return sample, foo[2]
+   return sample, torch.FloatTensor(1):fill(foo[2])
 end
 
 function Dataset:resume()
@@ -56,6 +63,10 @@ end
 function Dataset:generateSet(shuffleorder)
    shuffleorder=shuffleorder or 1
    -- is it initialized ? if no, shuffle, and set self.nextbatch to 1
+   
+   local sampleExample,targetExample = self:generateSample(1)
+   
+   
    if self.nextbatch==0 then
       if shuffleorder==1 then 
          self.shuffle=torch.randperm(#self.dataTable)
@@ -66,8 +77,7 @@ function Dataset:generateSet(shuffleorder)
       self.nextbatch=1
    end
 
-   local numbatches=math.floor(#self.dataTable/self.batchsize)
-   local sampleExample,targetExample = generateSample(1)
+   local numbatches=math.floor(#self.dataTable/self.batchSize)
    
    local sampleExampleDims=#(#sampleExample)
    local targetExampleDims=#(#targetExample)
@@ -75,12 +85,12 @@ function Dataset:generateSet(shuffleorder)
    local batchSampleDims=torch.LongStorage(1+sampleExampleDims)
    local batchTargetDims=torch.LongStorage(1+targetExampleDims)
    
-   batchSampleDims[1]=self.batchsize
+   batchSampleDims[1]=self.batchSize
    for d=1,sampleExampleDims do
       batchSampleDims[1+d]=(#sampleExample)[d]
    end
    
-   batchTargetDims[1]=self.batchsize
+   batchTargetDims[1]=self.batchSize
    for d=1,targetExampleDims do
       batchTargetDims[1+d]=(#targetExample)[d]
    end
@@ -90,8 +100,8 @@ function Dataset:generateSet(shuffleorder)
       local sampleBatch=torch.ByteTensor(batchSampleDims)
       local targetBatch=torch.FloatTensor(batchTargetDims)
       
-      for imgidx=1,self.batchsize do
-         local currentidx=self.shuffle[(batchidx-1)*self.batchsize+imgidx]
+      for imgidx=1,self.batchSize do
+         local currentidx=self.shuffle[(batchidx-1)*self.batchSize+imgidx]
          local sample, target = self:generateSample(currentidx)
          sampleBatch:select(1,imgidx):copy(sample)
          targetBatch:select(1,imgidx):copy(target)
@@ -104,6 +114,7 @@ function Dataset:generateSet(shuffleorder)
       self.nextbatch=self.nextbatch+1
 
       torch.save(paths.concat(self.targetDir, 'dataGeneratorState.t7'), self)
+      print('Batch '..batchidx..' / '..numbatches..' : done.')
 
       collectgarbage()
    end
