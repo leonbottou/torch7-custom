@@ -43,8 +43,8 @@ end
 
 function Dataset:generateSample(idx)
    require 'image'
-   -- this example generator will load an image from the data table and return a 256*256 RGB image
-   -- if the images are already in 256*256 RGB format, then they are just returned with the correct transposition (y,x,channels)
+   -- this example generator will load an RGB image from the data table and return a self.x*self.y RGB image + the label
+   -- if the images are already in self.x*self.y RGB format, then they are just returned with the correct transposition (y,x,channels)
    local foo=self.dataTable[idx]
    local img0=image.load(foo[1], 3, 'byte')
    
