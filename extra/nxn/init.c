@@ -20,6 +20,9 @@
 #include "generic/Dropmap.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/LogSoftMax.c"
+#include "THGenerateFloatTypes.h"
+
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libnxn(lua_State *L);
 
@@ -37,6 +40,9 @@ int luaopen_libnxn(lua_State *L)
 
   nxn_FloatDropmap_init(L);
   nxn_DoubleDropmap_init(L);
+
+  nxn_FloatLogSoftMax_init(L);
+  nxn_DoubleLogSoftMax_init(L);
 
   nxn_FloatSpatialConvolution_init(L);
   nxn_DoubleSpatialConvolution_init(L);

@@ -5,6 +5,7 @@ include('Module.lua')
 include('Sequential.lua')
 include('Column.lua')
 include('Copy.lua')
+include('Criterion.lua')
 
 include('Dataset.lua')
 
@@ -22,6 +23,8 @@ include('Jitter.lua')
 
 include('Linear.lua')
 include('Reshape.lua')
+include('ClassNLLCriterion.lua')
+include('LogSoftMax.lua')
 
 include('ConvProto.lua')
 include('testSgemm.lua')

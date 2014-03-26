@@ -167,6 +167,10 @@ function NeuralNet:getBatch(batchidx)
    return batch, target
 end
 
+function NeuralNet:cacheBatch(batchidx)
+   os.execute('cp '..paths.concat(self.datasetdir, 'batch'..batchidx..'.t7')..' /dev/null & ')
+end
+
 function NeuralNet:getTestBatch(batchidx)
    local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
    local batch=batchfile[1]:type(self.inputtype)
@@ -225,7 +229,7 @@ function NeuralNet:resume()
 end
 
 
-function nxn.NeuralNet:test()
+function NeuralNet:test()
    local params, gradients =self.network:parameters()
    local meancost=0
    -- run on validation set :
@@ -252,7 +256,7 @@ function nxn.NeuralNet:test()
 end
 
 
-function nxn.NeuralNet:measure()
+function NeuralNet:measure()
    local params, gradients = self.network:parameters()
    if self.epochcount==0 then self:showL1Filters() end
    
@@ -267,7 +271,7 @@ function nxn.NeuralNet:measure()
 end
 
 
-function nxn.NeuralNet:forwardprop(input, target, timer, batchidx)
+function NeuralNet:forwardprop(input, target, timer, batchidx)
    self.network:forward(input)
    self.criterion:forward(self.network.output, target)
    
@@ -286,7 +290,7 @@ function nxn.NeuralNet:forwardprop(input, target, timer, batchidx)
 end
 
 
-function nxn.NeuralNet:backpropUpdate(input, df_do, target, lr)
+function NeuralNet:backpropUpdate(input, df_do, target, lr)
    local params, gradients =self.network:parameters()
    
    -- apply momentum :
@@ -317,11 +321,12 @@ function nxn.NeuralNet:backpropUpdate(input, df_do, target, lr)
    if self.weightupperbound then
       self.network:clipWeights(self.weightupperbound)
    end
+   self.batchcount = self.batchcount + 1
 end
 
 
 
-function nxn.NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
+function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    self.lasttraincall={nepochs, savefrequency, measurementsfrequency}
    -- do a lot of tests and return errors if necessary :
    if not nepochs then
@@ -386,19 +391,24 @@ function nxn.NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       -- get proper batch
       local batchidx = self:getBatchNum(self.batchcount)
-      self.batchcount = self.batchcount + 1
-      
+      if self.batchcount<self.trainsetsize then
+         local nextbatchidx = self:getBatchNum(self.batchcount+1)
+         self:cacheBatch(nextbatchidx)
+      end
+
       local input, target = self:getBatch(batchidx)
       
       -- forward 
-      self:forwardprop(input, target, time, batchidx)
+      local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
+      if not successf then error(errormsgf..' during forward prop') end
 
       time:reset()
       
       -- backward :
       local df_do=self.criterion:backward(self.network.output, target)
       local currentlr = self.learningrate / (1 + self.lrdecay * self:getNumBatchesSeen())
-      self:backpropUpdate(input, df_do, target, currentlr)
+      local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
+      if not successb then error(errormsgb..' during backprop') end
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
