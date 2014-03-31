@@ -51,9 +51,22 @@ function NeuralNet:__init()
       self.lasttraincall = {}
 end
 
+local function zapTensor(a)
+   if a then 
+      a:resize(0)
+      a:storage():resize(0) 
+   end
+end
 
 function NeuralNet:setNetwork(net)
    self.network=net
+end
+
+function NeuralNet:cleanNetwork()
+   self.network:clean()
+   -- clean meanoverset tensor
+   zapTensor(self.meanoverset)
+   self.meanoverset=nil
 end
 
 function NeuralNet:setNumclasses(nclasses)
@@ -69,9 +82,22 @@ end
 
 
 function NeuralNet:setMeanoverset(meanoverset)
-   self.meanoverset=meanoverset
+   newsizes=torch.LongStorage(meanoverset:dim()+1)
+   newsizes[1]=1
+   for i=1,meanoverset:dim() do
+      newsizes[i+1]=meanoverset:size(i)
+   end
+   self.meanoversetsave=meanoverset:resize(newsizes)
 end
 
+function NeuralNet:expandMeanoverset(batch)
+   if not self.meanoverset then
+      self.meanoverset=self.meanoversetsave:expandAs(batch):contiguous()
+   end
+   if (self.meanoverset:size(1) ~= batch:size(1)) then
+      self.meanoverset=self.meanoversetsave:expandAs(batch):contiguous()
+   end
+end
 
 function NeuralNet:setDatasetdir(datasetdir)
    self.datasetdir=datasetdir
@@ -101,6 +127,7 @@ end
 
 
 function NeuralNet:saveNet()
+   self:cleanNetwork()
    torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
 end
 
@@ -154,6 +181,7 @@ end
 function NeuralNet:getBatch(batchidx)
    local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
    local batch=batchfile[1]:type(self.inputtype)
+   self:expandMeanoverset(batch)
    if self.meanoverset then
       batch:add(-1, self.meanoverset:expandAs(batch))
    end
@@ -168,6 +196,7 @@ end
 function NeuralNet:getTestBatch(batchidx)
    local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
    local batch=batchfile[1]:type(self.inputtype)
+   self:expandMeanoverset(batch)
    if self.meanoverset then
       batch:add(-1, self.meanoverset)
    end

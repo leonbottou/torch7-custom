@@ -39,3 +39,7 @@ function Dropout:updateGradInput(input, gradOutput)
    end
    return self.gradInput
 end
+
+function Dropout:getDisposableTensors()
+   return {self.output, self.gradInput, self.mask}
+end

@@ -19,3 +19,6 @@ function SpatialGlobalMaxPooling:updateGradInput(input, gradOutput)
    end
 end
 
+function SpatialGlobalMaxPooling:getDisposableTensors()
+   return {self.output, self.gradInput, self.indices}
+end

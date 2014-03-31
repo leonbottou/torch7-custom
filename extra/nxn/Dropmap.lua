@@ -45,3 +45,7 @@ function Dropmap:updateGradInput(input, gradOutput)
    end
    return self.gradInput
 end
+
+function Dropmap:getDisposableTensors()
+   return {self.output, self.gradInput, self.mask}
+end

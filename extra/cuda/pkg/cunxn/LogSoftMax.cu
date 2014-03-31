@@ -2,14 +2,6 @@
 #define MAX(a,b) (a) > (b) ? (a) : (b)
 
 
-__global__ void DummyKernel(float* idata, float* odata, int numclasses)
-{
-int foo=threadIdx.x;
-__shfl(foo, 0);
-
-}
-
-
 __global__ void LogSoftMaxForwardKernel(float* idata, float* odata, int numclasses)
 {
    /*blockIdx.z = [0, bs] 
@@ -102,7 +94,7 @@ __global__ void LogSoftMaxBackwardKernel(float* godata, float* gidata, float* od
    }
    
    s[threadIdx.x]=sum;
-   __syncthreads();
+   //__syncthreads();
    
    /* Y U NO __SHFL */
    if(threadIdx.x<16) { s[threadIdx.x] = s[threadIdx.x] + s[threadIdx.x+16]; }

@@ -18,3 +18,7 @@ function CrossMapNormalization:updateGradInput(input, gradOutput)
    input.nxn.CrossMapNormalization_updateGradInput(self, input, gradOutput)
    return self.gradInput
 end
+
+function CrossMapNormalization:getDisposableTensors()
+   return {self.output, self.gradInput, self.z}
+end

@@ -153,6 +153,29 @@ function Module:clipWeights(normbound)
    return self
 end
 
+local function zapTensor(a)
+   if a then 
+      a:resize(0)
+      a:storage():resize(0) 
+   end
+end
+
+function Module:getDisposableTensors()
+   return {self.output, self.gradInput}
+end
+
+function Module:clean()
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         if module.clean then module:clean() end
+      end
+   end
+   local DT=self:getDisposableTensors()
+   for _,a in ipairs(DT) do
+      zapTensor(a)
+   end   
+end
+
 
 function Module:float()
    return self:type('torch.FloatTensor')

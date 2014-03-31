@@ -218,6 +218,8 @@ static int cunxn_CrossMapNormalization_updateGradInput(lua_State *L)
   THCudaTensor_resizeAs(gradInput, input);
   THCudaTensor_zero(gradInput);
   
+  gradOutput = THCudaTensor_newContiguous(gradOutput); // should be contiguous already
+    
   float *input_data = THCudaTensor_data(input);
   float *gradInput_data = THCudaTensor_data(gradInput);
   float *gradOutput_data = THCudaTensor_data(gradOutput);
