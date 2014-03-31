@@ -21,7 +21,6 @@ function NeuralNet:__init()
       self.trainset = nil             -- should be a {first, last}
       self.trainsetsize = nil         -- should be last - first + 1
       self.testset = nil              -- should be a {first, last}
-      self.batchsize = nil            -- should be an integer
       
       self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
       self.checkpointname = nil       -- should be a 'filename'
@@ -95,11 +94,6 @@ function NeuralNet:setInputType(tensortype)
 end
 
 
-function NeuralNet:setBatchsize(batchsize)
-   self.batchsize=batchsize
-end
-
-
 function NeuralNet:setCheckpoint(checkpointdir, checkpointname)
    self.checkpointdir=checkpointdir
    self.checkpointname=checkpointname
@@ -161,7 +155,7 @@ function NeuralNet:getBatch(batchidx)
    local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
    local batch=batchfile[1]:type(self.inputtype)
    if self.meanoverset then
-      batch:add(-1, self.meanoverset)
+      batch:add(-1, self.meanoverset:expandAs(batch))
    end
    local target=batchfile[2]
    return batch, target
@@ -232,6 +226,7 @@ end
 function NeuralNet:test()
    local params, gradients =self.network:parameters()
    local meancost=0
+   local numexamples=0
    -- run on validation set :
    self.network:setTestMode(true)
    for valbatchidx=self.testset[1],self.testset[2] do
@@ -240,14 +235,15 @@ function NeuralNet:test()
       self.network:forward(valbatch)
       self.criterion:forward(self.network.output, valtarget)
       meancost=meancost+self.criterion.output
+      numexamples=numexamples+valbatch:size(1)
       if self.network.output:dim()==2 then
-         for k=1,self.batchsize do
+         for k=1,valbatch:size(1) do
             self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
          end
       end
    end
    self.network:setTestMode(false)
-   meancost=meancost/(self.testset[2]-self.testset[1]+1)/self.batchsize
+   meancost=meancost/numexamples
    self.confusion:updateValids()
    print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
    table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
@@ -277,14 +273,14 @@ function NeuralNet:forwardprop(input, target, timer, batchidx)
    
    -- confusion : only interesting for classification
    if self.network.output:dim()==2 then
-      for k=1,self.batchsize do
+      for k=1,input:size(1) do
          self.confusion:add(self.network.output[{k,{}}], target[{k}])
       end
       self.confusion:updateValids()
    end
    
-   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/self.batchsize..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
-      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/self.batchsize, self.confusion.averageValid*100})
+   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
+      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), self.confusion.averageValid*100})
    self.confusion:zero()
 
 end
@@ -299,7 +295,7 @@ function NeuralNet:backpropUpdate(input, df_do, target, lr)
    end
    
    -- compute and accumulate gradients
-   self.network:backward(input, df_do, lr/self.batchsize)
+   self.network:backward(input, df_do, lr/input:size(1))
    
    -- apply weight decay :
    for idx=1,#gradients do
@@ -348,11 +344,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    if not self.trainset then
       error('no training set range : use NeuralNet:setTrainsetRange(first, last)') 
    end
-   
-   if not self.batchsize then
-      error('no batch size set : use NeuralNet:setBatchsize(first, last)') 
-   end
-   
+
    if measurementsfrequency and (not self.testset) then
       error('no validation set range : use NeuralNet:setTestsetRange(first, last)') 
    end
