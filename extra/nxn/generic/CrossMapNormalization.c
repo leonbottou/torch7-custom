@@ -5,7 +5,7 @@
 static int nxn_(CrossMapNormalization_updateOutput)(lua_State *L)
 {
   THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
-  int dimension = luaT_getfieldcheckint(L, 1, "dimension")-1;
+  int dimension = 4-1;
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
   real alpha = luaT_getfieldchecknumber(L, 1, "alpha");
   real beta = luaT_getfieldchecknumber(L, 1, "beta");
@@ -42,7 +42,7 @@ static int nxn_(CrossMapNormalization_updateGradInput)(lua_State *L)
 {
   THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
   THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
-  int dimension  = luaT_getfieldcheckint(L, 1, "dimension")-1;
+  int dimension  = 4-1;
   THTensor *gradInput  = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
   real alpha = luaT_getfieldchecknumber(L, 1, "alpha");
   real beta = luaT_getfieldchecknumber(L, 1, "beta");

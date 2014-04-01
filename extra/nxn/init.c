@@ -26,6 +26,9 @@
 #include "generic/SpatialMaxPooling.c"
 #include "THGenerateFloatTypes.h"
 
+#include "generic/CrossMapNormalization.c"
+#include "THGenerateFloatTypes.h"
+
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libnxn(lua_State *L);
 
@@ -49,6 +52,9 @@ int luaopen_libnxn(lua_State *L)
 
   nxn_FloatSpatialMaxPooling_init(L);
   nxn_DoubleSpatialMaxPooling_init(L);
+
+  nxn_FloatCrossMapNormalization_init(L);
+  nxn_DoubleCrossMapNormalization_init(L);
 
   nxn_FloatSpatialConvolution_init(L);
   nxn_DoubleSpatialConvolution_init(L);
