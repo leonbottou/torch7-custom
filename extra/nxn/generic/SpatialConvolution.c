@@ -409,7 +409,7 @@ static int nxn_(SpatialConvolution_updateGradInput)(lua_State *L)
    int itgo=0;
 
    int it1;
-	#pragma omp parallel for private(it1)
+	/*#pragma omp parallel for private(it1)*/
    for (it1=0; it1<bs; it1++) {
       int  it2, it3, it4;
 		int itgocpy1	=	itgocpy0+(it1)*pgoh*pgow*op;
@@ -726,7 +726,7 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
          int inputsize2   = ((ih-fin) + stridey - 1) / stridey;
          int iticopy0=s*bs*toh*tiw*ip;
          int itinput0=0;
-int it1;
+         int it1;
          for (it1=0; it1<bs; it1++) {
             int iticopy1=iticopy0+(it1)*toh*tiw*ip;
             int itinput1=itinput0+(it1)*ih*iw*ip;
@@ -775,28 +775,27 @@ int it1;
 	int itout0=0;
 	int itocpy0=0;
 	int it1;
-	#pragma omp parallel for private(it1)
-         for (it1=0; it1<bs; it1++) {
-            int itout1=itout0+(it1)*oh*ow*op;
-            int itocpy1=itocpy0+(it1)*toh*tow*op;
-            int it2;
-            for (it2=0; it2<oh; it2++) { 
-               int itout2=itout1+(it2)*ow*op;
-               int itocpy2=itocpy1+(it2)*tow*op;
-               int it3;
-               for (it3=0; it3<ow; it3++ ) {
-                  int itout3=itout2+(it3)*op;
-                  int itocpy3=itocpy2+(it3)*op;
-                  int it4;
-                  for (it4=0; it4<op; it4++) {
-                     ocpyptr[itocpy3]  = gradoutptr[itout3];
-                     gradbiasptr[it4] += gradoutptr[itout3];
-                     itout3++;
-                     itocpy3++;
-					}
-				}
-			}
-		 }   
+   for (it1=0; it1<bs; it1++) {
+      int itout1=itout0+(it1)*oh*ow*op;
+      int itocpy1=itocpy0+(it1)*toh*tow*op;
+      int it2;
+      for (it2=0; it2<oh; it2++) { 
+         int itout2=itout1+(it2)*ow*op;
+         int itocpy2=itocpy1+(it2)*tow*op;
+         int it3;
+         for (it3=0; it3<ow; it3++ ) {
+            int itout3=itout2+(it3)*op;
+            int itocpy3=itocpy2+(it3)*op;
+            int it4;
+            for (it4=0; it4<op; it4++) {
+               ocpyptr[itocpy3]  = gradoutptr[itout3];
+               gradbiasptr[it4] += gradoutptr[itout3];
+               itout3++;
+               itocpy3++;
+			   }
+		   }
+	   }
+   }   
   
   THTensor_(mul)(gradBias, gradBias, scale);
   
