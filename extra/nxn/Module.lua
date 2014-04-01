@@ -176,6 +176,25 @@ function Module:clean()
    end   
 end
 
+function Module:zeroGradInputs()
+   if self.gradInput then
+      self.gradInput:zero()
+   end 
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         if module.zeroGradInputs then module:zeroGradInputs() end
+      end
+   end
+end
+
+function Module:setAddGrads(value)
+   if self.addgrads then 
+      self.addgrads=value 
+   end
+   if self.modules then
+      self.modules[1]:setAddGrads(value) 
+   end
+end
 
 function Module:float()
    return self:type('torch.FloatTensor')

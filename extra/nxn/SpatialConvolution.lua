@@ -1,6 +1,7 @@
 local SpatialConvolution, parent = torch.class('nxn.SpatialConvolution', 'nxn.Module')
 
-function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem, padleft, padright, padup, paddown)
+
+function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom, overlap)
    parent.__init(self)
 
    dW = dW or 1
@@ -14,26 +15,36 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, sh
    self.dH = dH
    self.padleft = padleft or 0
    self.padright = padright or 0
-   self.padup = padup or 0
-   self.paddown = paddown or 0
-   self.shdmem = shdmem or 1
-   self.kernelSlices = torch.Tensor()
-   self.backwardSlices = torch.Tensor()
+   self.padtop = padtop or 0
+   self.padbottom = padbottom or 0
+   self.overlap = overlap or 0
+   self.addgrads = 0
 
+   self.alpha= alpha or 1
+   self.beta= beta or 0
 
-   self.weight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW)
+   self.weight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane)
    self.bias = torch.Tensor(nOutputPlane)
 
--- zeroGradParameters will turn this to 1 and the next gradient 
--- computation will flush the accumulated gradients
-   self.zeroGradients = 0 
-   self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane, kH, kW):zero()
+   self.gradWeight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane):zero()
    self.gradBias = torch.Tensor(nOutputPlane):zero()
    
    self:reset()
 end
 
 function SpatialConvolution:reset(stdv)
+   if stdv then
+      stdv = stdv
+   else
+      stdv = 1/math.sqrt(self.kW*self.kH*self.nInputPlane)
+   end
+   torch.randn(self.weight, self.weight:size())
+   self.weight:mul(stdv)
+   torch.randn(self.bias, self.bias:size())
+   self.bias:mul(stdv)
+end
+
+function SpatialConvolution:resetuniform(stdv)
    if stdv then
       stdv = stdv * math.sqrt(3)
    else
@@ -65,12 +76,30 @@ function SpatialConvolution:updateGradInput(input, gradOutput)
 end
 
 function SpatialConvolution:zeroGradParameters()
-   self.zeroGradients = 1
+   self.gradWeight:zero()
+   self.gradBias:zero()
    -- they will be zeroed during the gradient computation
 end
 
 function SpatialConvolution:accGradParameters(input, gradOutput, scale)
+    scale = scale or 1
     input.nxn.SpatialConvolution_accGradParameters(self, input, gradOutput, scale) 
-    self.zeroGradients = 0
 --    return 
 end
+
+
+
+function SpatialConvolution:clipWeights(normbound)
+   for idx=1,self.nOutputPlane do
+      local filternorm=self.weight:select(2,idx):norm()
+      if filternorm > normbound then
+         self.weight:select(2,idx):mul(normbound/filternorm)
+      end
+   end
+end
+
+function SpatialConvolution:clipWeights(normbound)
+   self.weight.nxn.SpatialConvolution_clipWeights(self, normbound)
+end
+
+

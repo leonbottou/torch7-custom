@@ -11,7 +11,7 @@ function SpatialMaxPooling:__init(poolW, poolH, dW, dH, shdmem)
    self.dW = dW
    self.dH = dH
    self.shdmem = shdmem or 1
---   self.kslicestest = torch.Tensor()
+   self.indices = torch.Tensor()
 end
 
 

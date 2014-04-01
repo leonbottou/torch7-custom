@@ -6,363 +6,111 @@
     };
 #endif
 
-/*
+#ifndef MIN
+#define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
+#endif
 
-This file contains 4 kernels :
-- copyPixelsInSlices and its more optimized version copyPixelsInSlicesReg (when there is an upper bound on the number of planes).
-- addPixelsInSlices and its optimized version addPixelsInSlicesReg.
-
-The primary kernel is copyPixelsInSlices : it unfolds a 3D matrix into a 2D matrix in a way that the 2D convolution (with many kernels) becomes a matrix multiplication.
-We call the resulting matrix "kernelSlices". Each row corresponds to a kW*kH*nInputPlane array.
-
-Steps :
-1) choose a pixel (pixi = blockIdx.x, pixj = blockIdx.y)
-2) find which slices (coordinates (imin-imax, jmin-jmax)) will contain the pixel information
-3) loop : copy the pixel information, jump to next slice (and position) by 
-		moving the kernelSlices pointer ptrkslices by stridej = (kH*kW - dW) * nInputPlane
-
-	detailed example : pixel (4,4), kernels of size 5*5, stride dW=1 :
-	- 1st slice  : top-left coordinates : (imin,jmin)  . Pixel is in coordinates (4,4, position 25) of the slice.
-	- 2nd slice  : top-left coordinates : (imin,jmin+1). Pixel is in coordinates (4,3, position 24) of the slice.
-	- 3rd slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,2, position 23) of the slice.
-	- 4th slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,1, position 22) of the slice.
-	- 5th slice  : top-left coordinates : (imin,jmin+2). Pixel is in coordinates (4,0, position 21) of the slice.
-	- when jmax-jmin slices have been filled, we jump to the next series of slices by 
-		moving ptrkslices by stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane
-	- 1st slice  : top-left coordinates : (imin+1,jmin)  . Pixel is in coordinates (3,4, position 20) of the slice.
-	- 2nd slice  : top-left coordinates : (imin+1,jmin+1). Pixel is in coordinates (3,3, position 19) of the slice.
-	- 3rd slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,2, position 18) of the slice.
-	- 4th slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,1, position 17) of the slice.
-	- 5th slice  : top-left coordinates : (imin+1,jmin+2). Pixel is in coordinates (3,0, position 16) of the slice.
-	- ...
-
-In case the pixel (pixi,pixj) is in the zero-padding, we fill the slice with zeros.
-
-addPixelsInSlices is the same, except we read the contents of the array instead of writing.
-
-the *Reg versions just consist in preloading the pixel information before writing it.
+#ifndef MAX
+#define MAX(X,Y) ((X) < (Y) ? (Y) : (X))
+#endif
 
 
-*/
 
-__global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int nInputPlane2, int valuesperthread, int padleft, int padright, int padup, int paddown)
+
+__global__ void SCinputcopykernelsmall(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
+      int iw, int ip, int padtop, int padleft, int toh, int tiw)
 {
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
+      /* blockIdx.z  = s     [ 0, stridey-1 ]
+         blockIdx.y  = it1   [ 0, bs-1      ]
+         blockIdx.x  = it3   [ 0, (iw/blockDim.y)-1+1      ]
+         threadIdx.x = it4x  [ 0, ip-1      ]
+         threadIdx.y = it4y  [ 0, 32/ip-1   ]
+      // this is the special case where ip < 32 and the input is contiguous (optimized coalescing for input layer)
+       */
+         
+      int fout = (MAX(0,padtop-blockIdx.z)+stridey-1)/stridey;
+      int fin = fout * stridey - padtop + blockIdx.z;
 
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+      if (fin < ih) 
+      {
+         inputptr += (blockIdx.y)*ih*iw*ip+fin*iw*ip;
+         icopyptr += blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+padleft*ip;
+         
+         int inputsize2   = ((ih-fin) + stridey - 1) / stridey;
 
-	int i;
-	int j;
-	int k;
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane2;
-
-	int stridej = (kH*kW - dW) * nInputPlane2;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane2;
-	
-	if(tidx<nInputPlane2) {
-		for(i=imin; i<imax+1; i++) {
-			for(j=jmin; j<jmax+1; j++) {
-				if(zeropad) 
-				{
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=0;
-					}
-				}
-				else {
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=ptrinput[k*blk+tidx];
-					}
-				}
-				ptrkslices += stridej;
+         for (int it2=0; it2<inputsize2; it2++) { 
+            if((blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y<ip*iw) {
+            icopyptr[(blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y]=inputptr[(blockIdx.x*blockDim.y)*ip+threadIdx.x+blockDim.x*threadIdx.y];
+            }
+            inputptr += stridey*iw*ip;
+            icopyptr += tiw*ip;
 			}
-			ptrkslices += stridei;
-		}	
-	}
+      }
 }
+      
 
 
-__global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
+
+
+
+__global__ void SCinputcopykernel(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
+      int iw, int ip, int padtop, int padleft, int toh, int tiw, int inputstr0, int inputstr1, int inputstr2, int inputstr3)
 {
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
+      // blockIdx.z  = s     [ 0, stridey-1 ]
+      // blockIdx.y  = it1   [ 0, bs-1      ]
+      // blockIdx.x  = it3   [ 0, iw-1      ]
+      // threadIdx.x = it4   [ 0, 31        ]
+      // icopy is supposed to be contiguous as it is a local temporary matrix
+       
+         
+      int fout = (MAX(0,padtop-blockIdx.z)+stridey-1)/stridey;
+      int fin = fout * stridey - padtop + blockIdx.z;
 
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+      if (fin < ih) 
+      {
+         inputptr += (blockIdx.y)*inputstr0+fin*inputstr1+(blockIdx.x)*inputstr2;
+         icopyptr += blockIdx.z*bs*toh*tiw*ip+(blockIdx.y)*toh*tiw*ip+fout*tiw*ip+(padleft+blockIdx.x)*ip;
+         
+         int inputsize2   = ((ih-fin) + stridey - 1) / stridey;
 
-	int i;
-	int j;
-	int k;
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrgradinput += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices   += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-
-	for(k=0; k<valuesperthread; k++) {
-		ptrgradinput[k*blk+tidx] = 0;
-	}
-	
-	if(tidx<nInputPlane) {
-		if(!zeropad) {
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
-						for(k=0; k<valuesperthread; k++) {
-							ptrgradinput[k*blk+tidx] += ptrkslices[k*blk+tidx];
-						}
-					ptrkslices += stridej;
-				}
-				ptrkslices += stridei;
-			}	
-		}
-	}
+         for (int it2=0; it2<inputsize2; it2++) { 
+            for (int it4=threadIdx.x; it4<ip; it4+=blockDim.x) 
+            {
+               icopyptr[it4]=inputptr[it4];
+            }
+            inputptr += stridey*inputstr1;
+            icopyptr += tiw*ip;
+			}
+      }
 }
 
 
 
 
-template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
-{
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	int i;
-	int j;
-	int k;
-
-	float gradvalues[maxnumplanes/32];
-		for(k=0; k<valuesperthread; k++) {
-			gradvalues[k]=0;
-		}
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrgradinput += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices   += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-
-	if(tidx<nInputPlane) {
-		if(!zeropad) {
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
-					for(k=0; k<valuesperthread; k++) {
-						gradvalues[k] += ptrkslices[k*blk+tidx];
-					}
-				ptrkslices += stridej;
-				}
-				ptrkslices += stridei;
-			}	
-			for(k=0; k<valuesperthread; k++) {
-				ptrgradinput[k*blk+tidx] = gradvalues[k];
-			}
-		}
-	}
-}
-
-
-template <int maxnumplanes> __global__ void copyPixelsInSlicesReg(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
-{
-	// each block does one pixel of the input image
-	// each kernel slice is represented by its upper-left coordinates
-
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-	int i,j,k;
-
-	// step 1 : find which kernel slices contain the values of the pixel
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	// step 2 : move the pointers
-	// this one goes to where the pixel is at
-	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	// this one goes to the first pixel of the first kernel slice
-	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	// read pixel
-	// load the stuff in shared memory first...
-	float pixvalues[maxnumplanes/32];
-	if(tidx<nInputPlane) {
-		if (zeropad) 
-		{
-			for(k=0; k<valuesperthread; k++) {
-				pixvalues[k]=0;
-			}
-		}
-		else
-		{
-			for(k=0; k<valuesperthread; k++) {
-				pixvalues[k]=ptrinput[k*blk+tidx];
-			}
-		}
-	}
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-//	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
-
-//	write to memory
-	if(tidx<nInputPlane) {
-		for(i=imin; i<imax+1; i++) {
-			for(j=jmin; j<jmax+1; j++) {
-				if(zeropad) 
-				{
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=0;
-					}
-				}
-				else {
-					for(k=0; k<valuesperthread; k++) {
-						ptrkslices[k*blk+tidx]=pixvalues[k];
-					}
-				}
-				ptrkslices += stridej;
-			}
-			ptrkslices += stridei;
-		}	
-	}
-}
-
-
-__global__ void copyPixelsInSlicesRGB(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown)
-{
-	// each block does one pixel of the input image
-	// each kernel slice is represented by its upper-left coordinates
-
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
-	const int tidx=threadIdx.x;
-
-	int i,j;
-
-	if(pixj > isize2 + padleft + padright -1) return;
-
-	// step 1 : find which kernel slices contain the values of the pixel
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	// step 2 : move the pointers
-	// this one goes to where the pixel is at
-	ptrinput   += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	// read pixel
-	// load the stuff first...
-	float pixvalue;
-	if (zeropad) 	{
-		pixvalue=0;
-	}
-	else	{
-		pixvalue=ptrinput[tidx];
-	}
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
-
-//	write to memory
-	for(i=imin; i<imax+1; i++) {
-		for(j=jmin; j<jmax+1; j++) {
-			if(zeropad) 
-			{
-				ptrkslices[tidx]=0;
-			}
-			else {
-				ptrkslices[tidx]=pixvalue;
-			}
-			ptrkslices += stridej;
-		}
-		ptrkslices += stridei;
-	}	
-}
-
-
-__global__ void copyBiasToOutputs(float *ptrbias, float *ptroutput, const int size1, const int size2, const int nOutputPlane)
-{
-	// each thread has a value to manage...
-	//const int blk =blockDim.x;
-	const int tidx=blockDim.x*blockIdx.x + threadIdx.x;
-	const int tidy=blockIdx.y;
-
-	int i;
-
-	float val = ptrbias[tidx];
-	ptroutput+= tidy*size1*nOutputPlane;
-
-	for(i=0; i<size1; i++) {
-		ptroutput[i*nOutputPlane+tidx]=val;
-	}
-}
 
 
 
-__global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add)
-{
-	const int tid = blockDim.x*blockIdx.x + threadIdx.x;
-	const int tidx = threadIdx.x;
-	const int tidy = threadIdx.y;
-	const int numpix=size1*size2;
-	
-	__shared__ float values[32][32];
+__global__ void SCoutputcopykernel(float* outputptr, float* ocopyptr, float* biasptr, int bs, int oh, 
+      int ow, int op, int toh, int tow, float alpha, float beta, int outputstr0, int outputstr1, int outputstr2, int outputstr3)
+      {
+      /* blockIdx.z  = it1   [ 0, bs-1      ]
+         blockIdx.y  = it2   [ 0, oh-1      ]
+         blockIdx.x  = it3   [ 0, ow-1      ]
+         threadIdx.x = it4   [ 0, 31        ]
+       */      
+         outputptr += (blockIdx.z)*outputstr0+(blockIdx.y)*outputstr1+(blockIdx.x)*outputstr2;
+         ocopyptr  += (blockIdx.z)*toh*tow*op+(blockIdx.y)*tow*op+(blockIdx.x)*op;
+         for (int it4=threadIdx.x; it4<op; it4+=blockDim.x) {
+            outputptr[it4]=ocopyptr[it4] + biasptr[it4];
+		   }
+      }
 
-	float value = 0;
-	int i;
 
-	for(i=0; i+tidy<numpix; i+=blockDim.y) {
-		value += ptrgradoutput[(i+tidy)*nOutputPlane+tid];
-	}
 
-	values[tidy][tidx]=value;
-	__syncthreads();
-	// reduction :
 
-	if (tidy == 0) {
-		float gradbiasvalue=0;
-		#pragma unroll
-		for(i=0; i<32;i++){ gradbiasvalue+=values[i][tidx]; }
 
-		ptrgradbias[tid]=gradbiasvalue;
-	}
-	
-}
+
+
 
 
 
@@ -370,129 +118,186 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *output = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "output", "torch.CudaTensor");
-  THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
+  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *bias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "bias", "torch.CudaTensor");
-  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
-  long kW = luaT_getfieldcheckint(L, 1, "kW");
-  long kH = luaT_getfieldcheckint(L, 1, "kH");
-  long dW = luaT_getfieldcheckint(L, 1, "dW");
-  long dH = luaT_getfieldcheckint(L, 1, "dH");
-  long padup = luaT_getfieldcheckint(L, 1, "padup");
-  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
-  long padleft = luaT_getfieldcheckint(L, 1, "padleft");
-  long padright = luaT_getfieldcheckint(L, 1, "padright");
-  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
-  long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  long nInputPlane2 = luaT_getfieldcheckint(L, 1, "nInputPlane");
 
-  //luaL_argcheck(L, dimension >= 0 && dimension < input->nDimension, 2, "dimension out of range");
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
 
-  assert(nInputPlane2%32 == 0 || nInputPlane2<32);
-  assert(nOutputPlane%32 == 0);
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
+
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+
+  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
+  float beta = luaT_getfieldchecknumber(L, 1, "beta");
+  
+  float onef=1;
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int inputstr0 = input->stride[0];
+  int inputstr1 = input->stride[1];
+  int inputstr2 = input->stride[2];
+  int inputstr3 = input->stride[3];
+  
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  assert(ip==weight->size[3]);
+  
+  /* compute output size */
+  int ow = ( iw + padleft + padright - kw ) / stridex + 1;
+  int oh = ( ih + padtop + padbottom - kh ) / stridey + 1;
+
+  /* correct padright and padbottom */
+  padright = ow * stridex + kw - stridex - iw - padleft;
+  padbottom = oh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
+
+  /* input size with padding */
+  int piw = padleft + iw + padright; 
+  int pih = padtop + ih + padbottom;
+
+  /* number of horizontal strides between nonoverlapping runs */
+  int nxs = 1;
+  if (!overlap) { nxs = (kw + stridex - 1) / stridex ;}
+
+  /* total size of output buffer */
+  int tow = (piw + stridex - 1) / stridex;
+  int toh = (pih + stridey - 1) / stridey;
+
+  /* total size of input and output buffers */
+  int tiw = tow * stridex;
+  int tih = toh * stridey;  
+  assert(tiw >= piw && piw >= iw);
+  assert(tih >= pih && pih >= ih);
+
+  /*icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+  THLongStorage *icopysize = THLongStorage_newWithSize(5);
+  icopysize->data[0]=stridey;
+  icopysize->data[1]=bs;
+  icopysize->data[2]=toh;
+  icopysize->data[3]=tiw;
+  icopysize->data[4]=ip;
+  THCudaTensor* icopy = THCudaTensor_newWithSize(icopysize, NULL);
+  THCudaTensor_fill(icopy, 0);
+
+  float* icopyptr=THCudaTensor_data(icopy);
+  float* inputptr=THCudaTensor_data(input);
+
+ 
+  if(ip<32 && THCudaTensor_isContiguous(input)) {
+      dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
+      dim3 icopythreads(MIN(32,ip), 32/ip);
+      SCinputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+  }
+  else {
+      dim3 icopyblocks(iw, bs, stridey);
+      dim3 icopythreads(32);
+      SCinputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw, inputstr0, inputstr1, inputstr2, inputstr3);
+  }
+  
+
+  THCudaTensor* kcopy = weight;
+  THCudaTensor* ocopy = THCudaTensor_newWithSize4d(bs, toh, tow, op);
+  THCudaTensor_fill(ocopy, 0);
+
+  cublasHandle_t handle;
+  cublasStatus_t err = cublasCreate(&handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+
+   /* call GEMM */
+	int hcall;
+   for (hcall=0; hcall<nxs; hcall++) {
+	   int vcall;
+      for (vcall=0; vcall<kh; vcall++) {
+         int sq = vcall / stridey;
+         int sr = vcall - sq * stridey;
+         /* local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+         /* float* iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}]) */
+		   float* iptr = THCudaTensor_data(icopy);
+		   iptr       += (sr)*icopy->stride[0] + (sq)*icopy->stride[2] +  (hcall*stridex)*icopy->stride[3];
+
+         /* local kptr  = torch.data(kcopy:select(1,vcall+1)) */
+		   float* kptr = THCudaTensor_data(kcopy);
+		   kptr	 	+= vcall * kcopy->stride[0];
+
+         /* local optr = torch.data(ocopy:select(3,hcall+1)) */
+		   float* optr = THCudaTensor_data(ocopy);
+         optr		+= hcall * ocopy->stride[2];
 
 
-  // input should be contiguous already but... well.
-  // input = THCudaTensor_newContiguous(input);
-  long nInputPlane=input->stride[1];
-	//printf("%d", nInputPlane);
+         int nrun = (bs-1)*toh*tow + oh*tow;
+         int ngem = (nrun - hcall) / nxs;
 
-  // find the size of kernelslices
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long size1 = (isize1 - kH + padup + paddown) / dH + 1;
-  long size2 = (isize2 - kW + padleft + padright) / dW + 1;
-
-//  THCudaTensor* kernelSlices = THCudaTensor_newWithSize1d(size1*size2*kW*kH*nInputPlane);
-  THCudaTensor_resize1d(kernelSlices, size1*size2*kW*kH*nInputPlane2);
-  THCudaTensor_resize2d(output, size1* size2, nOutputPlane);
-
-  float* ptrkslices = THCudaTensor_data(kernelSlices);
-  float* ptroutput  = THCudaTensor_data(output);
-  float* ptrinput   = THCudaTensor_data(input);
-  float* ptrbias    = THCudaTensor_data(bias);
+         err = cublasSgemm(handle,
+                           CUBLAS_OP_T, CUBLAS_OP_N,
+                           op, ngem, kw*ip,
+                           &onef,
+                           kptr, kw*ip,
+                           iptr, nxs*stridex*ip,
+                           &onef,
+                           optr, nxs*op );     
+              
+              
+              
+         if (err != CUBLAS_STATUS_SUCCESS) { printf("error in sgemm"); }
+      }
+   }
 
 
-  // cuda blocks & threads:
-  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
-  dim3 threads (32);
-  long valuesperthread=nInputPlane2/32;
-  if(valuesperthread==0) { valuesperthread=1; } 
+  err = cublasDestroy(handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
 
-	  //with an upper bound on the number of planes, we can be more efficient
-	  //kernel unfold inputs
-	  if (nInputPlane2 >1024 || shdmem==0) {
-	  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, nInputPlane2, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 >512) {
-		copyPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 >384) {
-		copyPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 >256) {
-		copyPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 >128) {
-		copyPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 >32) {
-		copyPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane2 ==3) {
-		  dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10);
-		  dim3 threadsRGB (3,10);
-		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown);
-	  }
-	  else {
-		copyPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 1, padleft, padright, padup, paddown);
-	  }
+  // will output a contiguous matrix, except if the tensor is of proper size, in which case output will be recycled
+  if(output->nDimension==4)
+  {
+     if(output->size[0] != bs || output->size[1] != oh || output->size[2] != ow || output->size[3] != op)
+     {
+         THCudaTensor_resize4d(output, bs, oh, ow, op);
+     }
+  }
+  else //if the tensor doesn't exist...
+  {
+         THCudaTensor_resize4d(output, bs, oh, ow, op);
+  }
+   
+  float* ocopyptr=THCudaTensor_data(ocopy);
+  float* outputptr=THCudaTensor_data(output);
+  float* biasptr=THCudaTensor_data(bias);
 
-  //THCudaTensor_free(input); 
+  dim3 ocopyblocks(ow, oh, bs);
+  dim3 ocopythreads(32);
 
-
-
-  // fill output with biases
-  dim3 blocksbias (nOutputPlane/32, size2);
-  dim3 threadsbias (32);
-  copyBiasToOutputs<<<blocksbias, threadsbias>>>(ptrbias, ptroutput, size1, size2, nOutputPlane); 
-
-
-
-  // unfold conv kernels by resizing
-  THCudaTensor_resize2d(kernels, nOutputPlane, kW*kH*nInputPlane2);
-  THCudaTensor_transpose(kernels, NULL, 0, 1);
-  // put kernelslices in matrix mode
-  THCudaTensor_resize2d(kernelSlices, size1*size2,kW*kH*nInputPlane2);
-
-//  printf("sgemm\n");
-  // do addmm on output
-  THCudaTensor_addmm(output, 1,1, kernelSlices, kernels);
-//  printf("sgemm end\n");
-//  THCudaTensor_free(kernelSlices); 
-  THCudaTensor_transpose(kernels, NULL, 0, 1);
+  int outputstr0 = output->stride[0];
+  int outputstr1 = output->stride[1];
+  int outputstr2 = output->stride[2];
+  int outputstr3 = output->stride[3];
+  
+  SCoutputcopykernel <<<ocopyblocks, ocopythreads>>> (outputptr, ocopyptr, biasptr, bs, oh, ow, op, toh, tow, alpha, beta, outputstr0, outputstr1, outputstr2, outputstr3);
+  // alpha and beta are actually not used
 
 
   // check for errors
-  cudaError_t err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    printf("error in copyPixelsInSlices: %s\n", cudaGetErrorString(err));
+  cudaError_t lasterror = cudaGetLastError();
+  if (lasterror != cudaSuccess) {
+    printf("error in SpatialConvolution.updateOutput: %s\n", cudaGetErrorString(lasterror));
     THError("aborting");
   }
-
-  THCudaTensor_resize3d(output, size1, size2, nOutputPlane);
  
-//  THCudaTensor_resizeAs(kslicestest, kernelSlices);
-//  THCudaTensor_copy(kslicestest, kernelSlices);
-
   // final cut:
+  //THCudaTensor_free(input); 
+  THCudaTensor_free(icopy);
+  THCudaTensor_free(ocopy);
   //THCudaTensor_select(output, NULL, dimension, 0);
 
   return 1;
@@ -502,175 +307,902 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 
 
 
+
+
+__global__ void SCkernelCopyReverse(float* weightptr, float* revkptr, int stridey, int stridex, int kouth, 
+      int koutw, int kouto, int kouti, int sh, int so, int sw, int si, int kh, int kw, int ko, int ki)
+{
+   /*
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> usually this should be good
+            inputplane = blockIdx.z * blockDim.x+threadIdx.x
+         blockIdx.y  =    [ 0, stry-1    ]
+         blockIdx.x  =    [ 0, strx-1    ]
+         threadIdx.x =    [ 0, 31        ] -> weight input dim
+         threadIdx.y =    [ 0, 31        ] -> weight output dim
+            outputplane= iterator * blockDim.y + threadIdx.y
+   */
+   const int stry=blockIdx.y;
+   const int strx=blockIdx.x;
+
+   // put revkptr on proper stry,strx submatrix
+   revkptr  +=    (blockIdx.y*stridex + blockIdx.x)*kouth*kouto*koutw*kouti;
+
+   
+   __shared__ float weightvalues[32][33];
+   // for given x,y : weightvalues[inputplane][outputplane]
+   
+   
+   int ith, itw, xcoord, ycoord, ito;
+   for(ith=0; ith<kouth; ith++) {
+      ycoord=kh-(ith*stridey+stry+1);
+      if (ycoord<kh && ycoord>-1) {
+         for(itw=0; itw<koutw; itw++) {
+	   	   xcoord=kw-(itw*stridex+strx+1);
+				if (xcoord<kw && xcoord>-1) {         
+
+/*              int kh = weight->size[0];
+              int op = weight->size[1];
+              int kw = weight->size[2];
+              assert(ip==weight->size[3]);            */
+         
+         for (ito=0; ito<(ko+blockDim.y-1)/blockDim.y; ito++) {
+
+         /* iterate over tiles of size 32*32 */
+
+         /* Step 1 : for a given (x,y)
+            read weight(y, [32o], x, [32i]) and store the stuff in shmem */
+
+                  const int curoplane=ito*blockDim.y+threadIdx.y;
+                  const int curiplane=blockIdx.z * blockDim.x+threadIdx.x;
+                  
+                  if(curiplane<ki && curoplane<ko) {
+                     weightvalues[threadIdx.x][threadIdx.y]=weightptr[ycoord*sh+xcoord*sw+(curoplane)*so+(curiplane)*si];
+                  }
+                  
+                  __syncthreads();
+
+         /* Step 2 : write revk(ith, [32i], itw, [32o]) in submatrix */
+                  
+                  const int reviplane=blockIdx.z * blockDim.y + threadIdx.y;
+                  const int revoplane=ito*blockDim.x+threadIdx.x;
+                  
+                  if( reviplane < ki && revoplane < ko) {
+                     revkptr[ith*kouto*koutw*kouti + itw*kouti + reviplane*koutw*kouti + revoplane] = weightvalues[threadIdx.y][threadIdx.x];
+                  }
+
+                  __syncthreads();
+
+         }
+         
+         
+   
+         
+         }
+         }
+      }
+   }
+   
+
+
+   
+}
+
+
+
+
+
+
+
+
+
+
+__global__ void SCcopyGradOut(float* goptr, float* gocpyptr, int goh, int gow, int pgoh, int pgow, int revkh, int revkw, int op, int gradOutstr0, int gradOutstr1, int gradOutstr2, int gradOutstr3   )
+{
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, goh-1 ] (it2)
+      blockIdx.x  = [ 0, gow-1 ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+
+   gocpyptr += ((blockIdx.z*pgoh+(revkh -1 + blockIdx.y))*pgow+(revkw-1+blockIdx.x))*op;
+   goptr += ((blockIdx.z*goh+blockIdx.y)*gow+blockIdx.x)*gradOutstr2;
+
+   int i;
+   for(i=threadIdx.x; i<op; i+=blockDim.x)
+   {
+      gocpyptr[i]=goptr[i];
+   }
+
+}
+
+
+
+
+
+
+
+__global__ void SCcopyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih, int padtop, int padleft, int ih, int iw, float addgrads)
+{
+   /*
+      blockIdx.z  = [ 0, bs-1 ] (it1)
+      blockIdx.y  = [ 0 ] 
+      blockIdx.x  = [ 0, iw ] (it3)
+      threadIdx.x = [ 0, 31   ] (it4)
+   */
+
+   int starty, sizey;
+   
+   resptr   += blockIdx.z*rs0 + blockIdx.x*rs2;
+   gradinptr+= blockIdx.z*gs1 + (padleft + throwawayx + blockIdx.x)*gs3;
+   
+   float* tresptr ;
+   float* tgradinptr;
+   
+   for(int stry=stridey; stry>0; stry--) {
+   	int throwaway = stridey-stry < throwawayy;
+	   if(throwaway) {
+	   	starty = (stridey-stry+1) - throwawayy + stridey -1 ;
+   		sizey  = gih-1;
+   	}
+	   else 	{ 
+		   starty = (stridey-stry+1) - throwawayy -1 ;
+		   sizey  = gih;
+	   }
+	   
+	   for(int it2=0; it2<sizey; it2++) {
+	      if((starty + it2*stridey - padtop)>-1 && (starty + it2*stridey - padtop)<ih)
+	      {
+            tresptr	   = resptr    + (starty + it2*stridey - padtop)*rs1;
+            tgradinptr	= gradinptr + (stry-1)*gs0;
+            if(throwaway)  { tgradinptr += (it2+1)*gs2 ; }
+            else           { tgradinptr += it2*gs2 ; }
+      
+            for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
+            {
+               tresptr[it4]= tresptr[it4]*addgrads + tgradinptr[it4];
+            }
+         }
+      }
+   }
+   
+}
+
+
+
+
+
+
+
+
 static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
-  long kW = luaT_getfieldcheckint(L, 1, "kW");
-  long kH = luaT_getfieldcheckint(L, 1, "kH");
-  long dW = luaT_getfieldcheckint(L, 1, "dW");
-  long dH = luaT_getfieldcheckint(L, 1, "dH");
-  long padup = luaT_getfieldcheckint(L, 1, "padup");
-  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
-  long padleft = luaT_getfieldcheckint(L, 1, "padleft");
-  long padright = luaT_getfieldcheckint(L, 1, "padright");
-  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
-  long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
-//  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
+  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
+//  int dimension  = luaT_getfieldcheckint(L, 1, "dimension")-1;
+  THCudaTensor *result  = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
+  THCudaTensor *revk;
 
-//  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
-  THCudaTensor *backwardSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "backwardSlices", "torch.CudaTensor");
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
 
-  THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
-  THCudaTensor *gradInput = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
-//  THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
-//  THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
 
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+  float addgrads = luaT_getfieldchecknumber(L, 1, "addgrads");
+  //assert(overlap==1);
+
+  int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  assert(ip==weight->size[3]);
+
+
+   assert(gradOutput->nDimension == 4);
+   assert(bs == gradOutput->size[0]);
+   /* check that output h,w sizes match gradOutput sizes      */
+   int goh = gradOutput->size[1];
+   int gow = gradOutput->size[2];
+   assert(goh == (ih + padtop + padbottom - kh) / stridey + 1) ;
+   assert(gow == (iw + padleft + padright - kw) / stridex + 1) ;
+   assert(op == gradOutput->size[3]);
+
+
+
+   /*copyKernelReverse*/
+
+
+   int ko = weight->size[1];
+   int ki = weight->size[3];
+   
+   int sh = weight->stride[0];
+   int so = weight->stride[1];
+   int sw = weight->stride[2];
+   int si = weight->stride[3];
+   
+   
+   
+   int kouth=(kh+stridey-1)/stridey;
+   int kouto=ki;
+   int koutw=(kw+stridex-1)/stridex;
+   int kouti=ko;
+
+   /* clean this after... */
+   int revkh=kouth;
+   int revkw=koutw;
+
+   THLongStorage *revksize = THLongStorage_newWithSize(6);
+   revksize->data[0]=stridey;
+   revksize->data[1]=stridex;
+   revksize->data[2]=kouth;
+   revksize->data[3]=kouto;
+   revksize->data[4]=koutw;
+   revksize->data[5]=kouti;
+
+   revk = THCudaTensor_newWithSize(revksize, NULL);
+   THCudaTensor_fill(revk, 0);
+   
+   float* weightptr=THCudaTensor_data(weight);
+   float* revkptr=THCudaTensor_data(revk);
+   
+   dim3 kcrblocks(stridex, stridey, (ki+31)/32);
+   dim3 kcrthreads(32,32);
+   
+   
+   SCkernelCopyReverse <<<kcrblocks, kcrthreads>>>(weightptr, revkptr, stridey, stridex, kouth, 
+      koutw, kouto, kouti, sh, so, sw, si, kh, kw, ko, ki);
+   /*
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> parallelizing over inputplanes dimension : 
+            usually there will be lots of them except in data layer where there is no backprop
+            inputplane = blockIdx.z * blockDim.x+threadIdx.x
+         blockIdx.y  =    [ 0, stry-1    ]
+         blockIdx.x  =    [ 0, strx-1    ]
+         threadIdx.x =    [ 0, 31        ] -> weight input dim
+         threadIdx.y =    [ 0, 31        ] -> weight output dim
+            outputplane= iterator * blockDim.y + threadIdx.y
+   */
+   
+   
+   /* end of copyKernelReverse */
+   
+   
+   
+   /* create gradinput tensor :*/
+   int giw = ( gow + revkw -1 ) * stridex;
+   int gih = ( goh + revkh -1 ) ;
+
+   THLongStorage *gradinsize = THLongStorage_newWithSize(5);
+   gradinsize->data[0]=stridey;
+   gradinsize->data[1]=bs;
+   gradinsize->data[2]=gih;
+   gradinsize->data[3]=giw;
+   gradinsize->data[4]=ip;
+
+   THCudaTensor * gradin = THCudaTensor_newWithSize(gradinsize, NULL);
+   THCudaTensor_fill(gradin, 0);
+   
+   
+   /* pad gradoutput tensor :*/
+   int pgow = ( gow + revkw -1 );
+   int pgoh = ( goh + revkh -1 );
+
+   
+   /* here we take bs+1 to have some zero-padding at the end of the matrix */
+   /* it only costs some memory. GEMM does not use it. */
+
+   THLongStorage *gradoutsize = THLongStorage_newWithSize(4);
+   gradoutsize->data[0]=bs+1;
+   gradoutsize->data[1]=pgoh;
+   gradoutsize->data[2]=pgow;
+   gradoutsize->data[3]=op;
+
+   THCudaTensor * gradOutCopy = THCudaTensor_newWithSize(gradoutsize, NULL);
+   THCudaTensor_fill(gradOutCopy, 0);
+
+   float* goptr=THCudaTensor_data(gradOutput);
+   float* gocpyptr=THCudaTensor_data(gradOutCopy);
+
+   /* Convert this to a CUDA kernel 
+   
+   // Lua :
+   gradOutCopy = newSameTensor(gradOutput, bs+1, pgoh, pgow, op) 
+   tgocopy=narrowTensorAndZero(gradOutCopy, 1, 1, bs)
+   tgocopy=narrowTensorAndZero(tgocopy, 2, revkh, goh)
+   tgocopy=narrowTensorAndZero(tgocopy, 3, revkw, gow)
+   tgocopy:copy(gradOutput)
+
+
+   // C :
+   real* goptr=THTensor_(data)(gradOutput);
+   real* gocpyptr=THTensor_(data)(gradOutCopy);
+
+   int itgocpy0=0;
+   int itgo=0;
+
+   int it1, it2, it3, it4;
+   for (it1=0; it1<bs; it1++) {
+		int itgocpy1	=	itgocpy0+(it1)*pgoh*pgow*op;
+	    for (it2=0; it2<goh; it2++) { 
+			int itgocpy2=itgocpy1+(revkh-1+it2)*pgow*op;
+			for (it3=0; it3<gow; it3++ ) {
+				int itgocpy3=itgocpy2+(revkw-1+it3)*op;
+				for (it4=0; it4<op; it4++) {
+					gocpyptr[itgocpy3]=goptr[itgo];
+					itgocpy3++;
+					itgo++;
+				}
+			}
+		}
+	} 
+
+   
+   */
+   
+   dim3 cgoblocks(gow, goh, bs);
+   dim3 cgothreads(32);
+   
+  int gradOutstr0 = gradOutput->stride[0];
+  int gradOutstr1 = gradOutput->stride[1];
+  int gradOutstr2 = gradOutput->stride[2];
+  int gradOutstr3 = gradOutput->stride[3];
   
+   
+   
+   SCcopyGradOut <<< cgoblocks, cgothreads >>>(goptr, gocpyptr, goh, gow, pgoh, pgow, revkh, revkw, op, gradOutstr0, gradOutstr1, gradOutstr2, gradOutstr3);
 
-  long isize1 = input->size[0];
-  long isize2 = input->size[1];
-  long size1 = gradOutput->size[0];
-  long size2 = gradOutput->size[1];
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, goh-1 ] (it2)
+      blockIdx.x  = [ 0, gow-1 ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+   
+   /* end of copyGradOut */
+   
+   float onef=1;
+   
+  cublasHandle_t handle;
+  cublasStatus_t err = cublasCreate(&handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+   
+   /* GEMM calls : */
+	int nxs=1;
+	if(!overlap) {
+	   nxs=revkw; 
+	   //printf("no overlap");
+	}
+	for (int hcall=0; hcall<nxs; hcall++) {
+	   for (int stry=0; stry<stridey; stry++) {
+		   for (int strx=0; strx<stridex; strx++) {
+			   for (int vcall=0; vcall<revkh; vcall++) {
+				   float* gradoutptr  = THCudaTensor_data(gradOutCopy);
+				   gradoutptr		   += (revkh-vcall-1)*gradOutCopy->stride[1] + hcall*gradOutCopy->stride[2];
+               int ldgradout      = op*nxs;
+                     
+				   float* krevptr	    = THCudaTensor_data(revk);
+				   krevptr 		      += (stry)*revk->stride[0] + (strx)*revk->stride[1] + (revkh-vcall-1)*revk->stride[2];
+               int szkrev         = op*revkw;
+               int ldkrev     	 = op*revkw;
+                  
+				   float* gradinptr	 = THCudaTensor_data(gradin);
+				   gradinptr		+= (stry)*gradin->stride[0] + (stridex-(strx)-1+hcall*stridex)*gradin->stride[3];
+               int ldgradin   	 = ip * stridex * nxs;
+                  
+               int nspots         = giw/stridex*gih*bs;
+               int ngem           = (nspots-hcall+nxs-1)/nxs;
+                  
+               err = cublasSgemm(handle,
+                           CUBLAS_OP_T, CUBLAS_OP_N,
+                           ip, ngem, szkrev,
+                           &onef,
+                           krevptr, ldkrev,
+                           gradoutptr, ldgradout,
+                           &onef,
+                           gradinptr, ldgradin );
 
-  THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
-  THCudaTensor_resize2d(backwardSlices, size1*size2,kW*kH*nInputPlane);
+               if (err != CUBLAS_STATUS_SUCCESS) { printf("error in sgemm"); }
+               //else {printf("called sgemm..."); }
+			   }
+		   }
+	   }
+   }
 
-// backprop gradinput into the slices
-  THCudaTensor_addmm(backwardSlices, 0, 1, gradOutput, kernels);
+  err = cublasDestroy(handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+     /* correct padright and padbottom */
+  //int oldpadright = padright;
+  //int oldpadbottom = padbottom;
+  padright = gow * stridex + kw - stridex - iw - padleft;
+  padbottom = goh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
 
-
-// we resize gradOutput back to what it was...
-  THCudaTensor_resize3d(gradOutput, size1, size2, nOutputPlane);
-
-
-
-
-  THCudaTensor_resizeAs(gradInput, input);
-
-  float* ptrbackslices = THCudaTensor_data(backwardSlices);
-  float* ptrgradinput  = THCudaTensor_data(gradInput);
-
-  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
-  dim3 threads (32);
-  long valuesperthread=nInputPlane/32;
-
-  if(valuesperthread==0) { valuesperthread=1; } 
-  // this is for the specific case of the inputs with less than 32 channels
-  // for some reason i thought it would be cool to be able to backprop through it
-
-	  if (nInputPlane >1024 || shdmem==0) {
-	  addPixelsInSlices<<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  }
-	  else if (nInputPlane >512)  {
-	  addPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-	  else if (nInputPlane >384)  {
-	  addPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-	  else if (nInputPlane >256)  {
-	  addPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-	  else if (nInputPlane >128)  {
-	  addPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-	  else if (nInputPlane >32)  {
-	  addPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-	  else {
-	  addPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, valuesperthread, padleft, padright, padup, paddown);
-	  } 
-
-//  THCudaTensor_copy(kslicestest, kernelSlices);
+  /* input size with padding */
+  //int piw = padleft + iw + padright; 
+  //int pih = padtop + ih + padbottom;
 
 
 
+    
+   int throwawayx=stridex - kw%stridex;
+   int throwawayy=stridey - kh%stridey;
+   if (stridex==1 || stridex==throwawayx) { throwawayx=0 ; } 
+   if (stridey==1 || stridey==throwawayy) { throwawayy=0 ; }
+
+   /* clean this after */ 
+   int resw=iw;
+   int resh=ih;
+
+  // will output a contiguous matrix, except if the tensor is of proper size, in which case output will be recycled
+  // gradinput is zeroed by forward calls
+  if(result->nDimension==4)
+  {
+     if(result->size[0] != bs || result->size[1] != resh || result->size[2] != resw || result->size[3] != ip)
+     {
+         THCudaTensor_resize4d(result, bs, resh, resw, ip);
+         THCudaTensor_fill(result, 0);
+     }
+  }
+  else //if the tensor doesn't exist...
+  {
+         THCudaTensor_resize4d(result, bs, resh, resw, ip);
+         THCudaTensor_fill(result, 0);
+  }
+   
+
+
+
+   float* gradinptr = THCudaTensor_data(gradin);
+   float* resptr = THCudaTensor_data(result);
+
+   dim3 cgirblocks(iw, 1, bs);
+   dim3 cgirthreads(32);
+
+   int rs0 = result->stride[0];
+   int rs1 = result->stride[1];
+   int rs2 = result->stride[2];
+   int gs0 = gradin->stride[0]; 
+   int gs1 = gradin->stride[1];
+   int gs2 = gradin->stride[2];
+   int gs3 = gradin->stride[3];
+ 
+
+   SCcopyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw, addgrads);
+   /*
+      blockIdx.z  = [ 0, bs-1 ] (it1)
+      blockIdx.y  = [ 0 ] 
+      blockIdx.x  = [ 0, iw ] (it3)
+      threadIdx.x = [ 0, 31   ] (it4)
+   */
+
+   
+   
+   THCudaTensor_free(gradin);
+   THCudaTensor_free(revk);
+   THCudaTensor_free(gradOutCopy);
+   
+   
+   
+   
+   
+   //THCudaTensor_resizeAs(gradInput, result);
+   //THCudaTensor_copy(gradInput, result);
+   
+   
+      
+
+  // check for errors
+  cudaError_t err2 = cudaGetLastError();
+  if (err2 != cudaSuccess) {
+    printf("error in SpatialConvolution.updateOutput: %s\n", cudaGetErrorString(err2));
+    THError("aborting");
+  }
 
   return 1;
 }
 
 
 
+
+
+__global__ void SCcopyGradOutInBuffer(float* goptr, float* gocpyptr, int oh, int ow, int toh, int tow, int op, int gradOutstr0, int gradOutstr1, int gradOutstr2, int gradOutstr3)
+{
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, oh-1  ] (it2)
+      blockIdx.x  = [ 0, ow-1  ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+
+   gocpyptr += blockIdx.z*toh*tow*op + blockIdx.y*tow*op + blockIdx.x*op;
+   goptr += ((blockIdx.z*oh+blockIdx.y)*ow+blockIdx.x)*gradOutstr2;
+
+   int i;
+   for(i=threadIdx.x; i<op; i+=blockDim.x)
+   {
+      gocpyptr[i]=goptr[i];
+   }
+
+}
+
+
+
+
+__global__ void SCcomputeGradBias(float* goptr, float* gradbiasptr, int bs, int oh, int ow, int op, float scale, int gradOutstr0, int gradOutstr1, int gradOutstr2, int gradOutstr3)
+{
+   /* blockIdx.x  = [ 0, ceil(op/32) ]
+      blockIdx.y  = [ 0, bs-1        ]
+      threadIdx.x = [ 0, 31          ]   
+   */
+
+   goptr += blockIdx.y*gradOutstr0;
+   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   
+   float b=0;
+   
+   if (idx<op) {
+      for(int i=0; i<oh*ow; i++) {
+         b += goptr[i*gradOutstr2 + idx];
+      }
+   atomicAdd(&gradbiasptr[idx], b*scale);
+   }
+   
+}
+
+
+
+
+
+
 static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
 {
-//  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
+
+
+
+  THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
   THCudaTensor *gradOutput = (THCudaTensor *)luaT_checkudata(L, 3, "torch.CudaTensor");
-  long kW = luaT_getfieldcheckint(L, 1, "kW");
-  long kH = luaT_getfieldcheckint(L, 1, "kH");
-//  long dW = luaT_getfieldcheckint(L, 1, "dW");
-//  long dH = luaT_getfieldcheckint(L, 1, "dH");
-//  long padup = luaT_getfieldcheckint(L, 1, "padup");
-//  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
-//  long padleft = luaT_getfieldcheckint(L, 1, "padleft");
-//  long padright = luaT_getfieldcheckint(L, 1, "padright");
-//  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
-  long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
-  long zeroGradients = luaT_getfieldcheckint(L, 1, "zeroGradients");
-
-  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
-
-//  THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
   THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
-//  printf("accgradparameters");
+  float scale = luaL_optnumber(L, 4, 1);
 
-//  long isize1 = input->size[0];
-//  long isize2 = input->size[1];
-  long size1 = gradOutput->size[0];
-  long size2 = gradOutput->size[1];
+  int stridex = luaT_getfieldcheckint(L, 1, "dW");
+  int stridey = luaT_getfieldcheckint(L, 1, "dH");
 
-  THCudaTensor_resize2d(gradOutput, size1* size2, nOutputPlane);
+  int padleft = luaT_getfieldcheckint(L, 1, "padleft");
+  int padright = luaT_getfieldcheckint(L, 1, "padright");
+  int padtop = luaT_getfieldcheckint(L, 1, "padtop");
+  int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
 
-  float* ptrgradbias = THCudaTensor_data(gradBias);
-  float* ptrgradoutput  = THCudaTensor_data(gradOutput);
-  dim3 blocksgradbias (nOutputPlane/32);
-  dim3 threadsgradbias (32,32);
+  int overlap = luaT_getfieldcheckint(L, 1, "overlap");
 
-  THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
-//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
+  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
+  float beta = luaT_getfieldchecknumber(L, 1, "beta");
+  
 
-/*long gwsize1 = gradWeight->size[0];
-long gwsize2 = gradWeight->size[1];
+  float onef=1;
 
-long kslsize1 = kernelSlices->size[0];
-long kslsize2 = kernelSlices->size[1];
 
-printf("gwsize : %d, %d \n", gwsize1, gwsize2);
-printf("kslsize : %d, %d \n", kslsize1, kslsize2);
-printf("goutsize : %d, %d \n", size1, size2);*/
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
 
-  if (zeroGradients == 1) { 
-	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
-	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0);
-  } else {
-	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
-	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1);
-  }  
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
-//  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
+  int inputstr0 = input->stride[0];
+  int inputstr1 = input->stride[1];
+  int inputstr2 = input->stride[2];
+  int inputstr3 = input->stride[3];
+  
+  int kh = gradWeight->size[0];
+  int op = gradWeight->size[1];
+  int kw = gradWeight->size[2];
+  assert(ip==gradWeight->size[3]);
+  
+  /* compute output size */
+  int ow = ( iw + padleft + padright - kw ) / stridex + 1;
+  int oh = ( ih + padtop + padbottom - kh ) / stridey + 1;
 
-// we resize gradOutput back to what it was...
-  THCudaTensor_resize3d(gradOutput, size1, size2, nOutputPlane);
+  /* correct padright and padbottom */
+//  int oldpadright = padright;
+//  int oldpadbottom = padbottom;
+  padright = ow * stridex + kw - stridex - iw - padleft;
+  padbottom = oh * stridey + kh - stridey - ih - padtop;
+  /* assert(not exact or padright ~= oldpadright, "horizontal size mismatch"); */
+  /* assert(not exact or padbottom ~= oldpadbottom, "horizontal size mismatch"); */
+  if (padright < 0)  { padright = 0;}
+  if (padbottom < 0) { padbottom = 0;}
 
-return 1;
+  /* input size with padding */
+  int piw = padleft + iw + padright; 
+  int pih = padtop + ih + padbottom;
+
+  /* number of horizontal strides between nonoverlapping runs */
+  int nxs = 1;
+  if (!overlap) { nxs = (kw + stridex - 1) / stridex ;}
+
+  /* total size of output buffer */
+  int tow = (piw + stridex - 1) / stridex;
+  int toh = (pih + stridey - 1) / stridey;
+
+  /* total size of input and output buffers */
+  int tiw = tow * stridex;
+  int tih = toh * stridey;  
+  assert(tiw >= piw && piw >= iw);
+  assert(tih >= pih && pih >= ih);
+
+  /*icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+  THLongStorage *icopysize = THLongStorage_newWithSize(5);
+  icopysize->data[0]=stridey;
+  icopysize->data[1]=bs;
+  icopysize->data[2]=toh;
+  icopysize->data[3]=tiw;
+  icopysize->data[4]=ip;
+  THCudaTensor* icopy = THCudaTensor_newWithSize(icopysize, NULL);
+  THCudaTensor_fill(icopy, 0);
+
+
+  float* icopyptr=THCudaTensor_data(icopy);
+  float* inputptr=THCudaTensor_data(input);
+
+ 
+  if(ip<32 && THCudaTensor_isContiguous(input)) {
+      dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
+      dim3 icopythreads(MIN(32,ip), 32/ip);
+      SCinputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+  }
+  else {
+      dim3 icopyblocks(iw, bs, stridey);
+      dim3 icopythreads(32);
+      SCinputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw, inputstr0, inputstr1, inputstr2, inputstr3);
+  }
+  
+
+  THCudaTensor* kcopy = gradWeight;
+  THCudaTensor* ocopy = THCudaTensor_newWithSize4d(bs, toh, tow, op);
+  THCudaTensor_fill(ocopy, 0);
+  
+  float* gradoutptr=THCudaTensor_data(gradOutput);
+  float* ocpyptr=THCudaTensor_data(ocopy);
+  
+  dim3 goibblocks(ow, oh, bs);
+  dim3 goibthreads(32);
+
+  int gradOutstr0 = gradOutput->stride[0];
+  int gradOutstr1 = gradOutput->stride[1];
+  int gradOutstr2 = gradOutput->stride[2];
+  int gradOutstr3 = gradOutput->stride[3];
+  
+  
+   SCcopyGradOutInBuffer <<<goibblocks,goibthreads>>>(gradoutptr, ocpyptr, oh, ow, toh, tow, op, gradOutstr0, gradOutstr1, gradOutstr2, gradOutstr3);
+
+   /* blockIdx.z  = [ 0, bs-1  ] (it1)
+      blockIdx.y  = [ 0, oh-1  ] (it2)
+      blockIdx.x  = [ 0, ow-1  ] (it3)
+      threadIdx.x = [ 0, 31    ] (it4)
+   */
+
+
+  float* gradbiasptr=THCudaTensor_data(gradBias);
+  
+  dim3 gbblocks((op+31)/32, bs);
+  dim3 gbthreads(32);
+  SCcomputeGradBias <<< gbblocks, gbthreads >>> (gradoutptr, gradbiasptr, bs, oh, ow, op, scale, gradOutstr0, gradOutstr1, gradOutstr2, gradOutstr3);
+  
+   /* blockIdx.x  = [ 0, ceil(op/32) ]
+      threadIdx.x = [ 0, 31          ]   
+   */
+
+
+  cublasHandle_t handle;
+  cublasStatus_t err = cublasCreate(&handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+
+   /* call GEMM */
+	int hcall;
+   for (hcall=0; hcall<nxs; hcall++) {
+	   int vcall;
+      for (vcall=0; vcall<kh; vcall++) {
+         int sq = vcall / stridey;
+         int sr = vcall - sq * stridey;
+         /* local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
+         /* float* iptr = torch.data(icopy[{sr+1,{},sq+1,hcall*stridex+1,{}}]) */
+		   float* iptr = THCudaTensor_data(icopy);
+		   iptr       += (sr)*icopy->stride[0] + (sq)*icopy->stride[2] +  (hcall*stridex)*icopy->stride[3];
+
+         /* local kptr  = torch.data(kcopy:select(1,vcall+1)) */
+		   float* kptr = THCudaTensor_data(kcopy);
+		   kptr	 	+= vcall * kcopy->stride[0];
+
+         /* local optr = torch.data(ocopy:select(3,hcall+1)) */
+		   float* optr = THCudaTensor_data(ocopy);
+         optr		+= hcall * ocopy->stride[2];
+
+
+         int nrun = (bs-1)*toh*tow + oh*tow;
+         int ngem = (nrun - hcall) / nxs;
+
+         //printf("calling sgemm...");
+
+         /*THBlas_(gemm)('T','N', op, ngem, kw*ip, 
+              1, kptr, kw*ip, iptr, nxs*stridex*ip,
+              1, optr, nxs*op ); */
+         err = cublasSgemm(handle,
+                           CUBLAS_OP_N, CUBLAS_OP_T,
+                           kw*ip,op, ngem, 
+                           &scale,
+                           iptr, nxs*stridex*ip, 
+                           optr, nxs*op, 
+                           &onef,
+                           kptr, kw*ip );     
+              
+              
+              
+         if (err != CUBLAS_STATUS_SUCCESS) { printf("error in sgemm"); }
+         //else {printf("called sgemm..."); }
+      }
+   }
+
+
+  err = cublasDestroy(handle);
+  if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
+
+
+
+
+
+  // check for errors
+  cudaError_t lasterror = cudaGetLastError();
+  if (lasterror != cudaSuccess) {
+    printf("error in SpatialConvolution.updateOutput: %s\n", cudaGetErrorString(lasterror));
+    THError("aborting");
+  }
+ 
+  // final cut:
+  //THCudaTensor_free(input); 
+  THCudaTensor_free(icopy);
+  THCudaTensor_free(ocopy);
+  //THCudaTensor_select(output, NULL, dimension, 0);
+
+  return 1;
 
 }
+
+
+
+__global__ void SCclipWeightsKernel(float* wdataptr, float normbound, int kh, int op, int kw, int ip, int str0, int str1)
+{
+   /* blockIdx.x  = [ 0, op    ] ()
+      threadIdx.x = [ 0, 31    ] ()
+   */
+
+   wdataptr += blockIdx.x*str1;
+
+   volatile __shared__ float sqrsums[32];
+   int ith, it, i;
+   float sqrsum=0;
+   float current;
+   int numelperline=kw*ip;
+   for (ith=0; ith<kh; ith++)
+   {
+      for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
+      {
+         current=wdataptr[ith*str0+i];
+         sqrsum+=current*current;
+      }
+   }
+
+   sqrsums[threadIdx.x]=sqrsum;
+   
+   // NVCC : Y U NO __SHFL ?
+   if (threadIdx.x < 16)
+   {
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 16];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 8];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 4];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 2];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 1];
+      sqrsums[threadIdx.x + 1] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 2] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 4] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 8] = sqrsums[threadIdx.x];
+      sqrsums[threadIdx.x + 16] = sqrsums[threadIdx.x];
+   }
+
+   sqrsum=sqrsums[threadIdx.x];   
+
+
+   // replace with this when __shfl works :
+   /*if (threadIdx.x < 16)
+   {
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 16];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 8];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 4];
+      sqrsums[threadIdx.x] += sqrsums[threadIdx.x + 2];
+   }
+   if (threadIdx.x == 0)
+   {
+      sqrsum = sqrsums[0]+sqrsums[1];
+   }
+   
+   sqrsum = __shfl(sqrsum, 0);*/
+   
+   if(sqrsum>normbound*normbound)
+   {
+      float scale = normbound/sqrt(sqrsum); 
+      for (ith=0; ith<kh; ith++)
+      {
+         for(i=threadIdx.x; i<numelperline; i+=blockDim.x)
+         {
+            wdataptr[ith*str0+i] *= scale;
+            //wdataptr[ith*str0+i] =0; // for testing...
+         }
+      }
+   }
+}
+
+
+
+
+
+static int cunxn_SpatialConvolution_clipWeights(lua_State *L)
+{
+  THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
+  float normbound = luaL_optnumber(L, 2, 1);
+
+  int kh = weight->size[0];
+  int op = weight->size[1];
+  int kw = weight->size[2];
+  int ip = weight->size[3];
+  
+  int str0 = weight->stride[0];
+  int str1 = weight->stride[1];
+  int str2 = weight->stride[2];
+  int str3 = weight->stride[3];
+
+  float* wdata=THCudaTensor_data(weight);
+
+  dim3 blocks(op);
+  dim3 threads(32);
+  
+  SCclipWeightsKernel <<<blocks, threads>>>(wdata, normbound, kh, op, kw, ip, str0, str1);
+
+  return 1;
+}
+
+
+
+
+
+
+
 
 static const struct luaL_Reg cunxn_SpatialConvolution__ [] = {
   {"SpatialConvolution_updateOutput", cunxn_SpatialConvolution_updateOutput},
   {"SpatialConvolution_updateGradInput", cunxn_SpatialConvolution_updateGradInput},
   {"SpatialConvolution_accGradParameters", cunxn_SpatialConvolution_accGradParameters},
+  {"SpatialConvolution_clipWeights", cunxn_SpatialConvolution_clipWeights},
   {NULL, NULL}
 };
 
@@ -680,3 +1212,4 @@ static void cunxn_SpatialConvolution_init(lua_State *L)
   luaT_registeratname(L, cunxn_SpatialConvolution__, "nxn");
   lua_pop(L,1);
 }
+

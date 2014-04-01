@@ -101,6 +101,9 @@ end
 
 function NeuralNet:setDatasetdir(datasetdir)
    self.datasetdir=datasetdir
+   if paths.filep(paths.concat(foo, 'meanoverset.t7')) then
+      self:setMeanoverset(torch.load(paths.concat(foo, 'meanoverset.t7')))
+   end
 end
 
 

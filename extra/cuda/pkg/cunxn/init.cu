@@ -8,12 +8,12 @@
 #include <thrust/functional.h>
 #include <thrust/device_ptr.h>
 
+#include "testSgemm.cu"
 #include "ReLU.cu"
 #include "CrossMapNormalization.cu"
 #include "SpatialConvolution.cu"
 #include "SpatialMaxPooling.cu"
 #include "SpatialGlobalMaxPooling.cu"
-#include "testSgemm.cu"
 #include "ConvProto.cu"
 #include "Dropmap.cu"
 #include "LogSoftMax.cu"

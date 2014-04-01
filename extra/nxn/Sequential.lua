@@ -22,6 +22,9 @@ function Sequential:get(index)
 end
 
 function Sequential:updateOutput(input)
+   -- compatibility with nxn.ColNewumn
+   self.modules[#self.modules].output=self.output
+   --
    local currentOutput = input
    for i=1,#self.modules do 
       currentOutput = self.modules[i]:updateOutput(currentOutput)
@@ -31,6 +34,9 @@ function Sequential:updateOutput(input)
 end
 
 function Sequential:updateGradInput(input, gradOutput)
+   -- compatibility with nxn.ColNewumn
+   if self.modules[1].gradInput then self.modules[1].gradInput=self.gradInput end
+   --
    local currentGradOutput = gradOutput
    local currentModule = self.modules[#self.modules]
    for i=#self.modules-1,1,-1 do
