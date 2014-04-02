@@ -70,6 +70,63 @@ template <int maxnumplanes> __global__ void CrossMapNormalization_gradInput(floa
    float alphan=alpha/n;
 
    __shared__ float pixvalues[maxnumplanes];
+   __shared__ float gradinvalues[maxnumplanes];
+   __shared__ float zvalues[maxnumplanes];
+   
+   input  += blockIdx.z*str0 + blockIdx.y*str1;
+   gradOutput += blockIdx.z*str0 + blockIdx.y*str1;
+   gradInput += blockIdx.z*str0 + blockIdx.y*str1;
+   zsave  += blockIdx.z*str0 + blockIdx.y*str1;
+   
+   // for each pixel 0 -> iw
+   for (int pixw=0; pixw<iw; pixw++)
+   {
+      // load pixels in shared memory
+      for (int i=threadIdx.x; i<nplanes;  i+=blockDim.x)
+      {
+         float z = zsave[pixw*nplanes+i];
+         float aj= input[pixw*nplanes+i];
+         float gj= gradOutput[pixw*nplanes+i];   
+         
+         float zb= pow(z,-beta);
+         float zb2=zb/z;
+         
+         pixvalues[i]=aj;
+         gradinvalues[i]=gj*zb;
+         zvalues[i]=gj*2*alphan*beta*aj*zb2;
+      }
+      
+      for (int i=threadIdx.x; i<nplanes;  i+=blockDim.x)
+      {
+         float ai    = pixvalues[i];
+         float gradi = gradinvalues[i];
+         int endo = i + n/2 + 1;
+         int starto = endo - n;
+
+         for (int j=starto; j<endo; j++)
+         {
+            if(j>-1 && j<nplanes)
+            {
+      			gradi -= ai*zvalues[j];
+            }
+         }
+         gradInput[pixw*nplanes+i]=gradi;
+      }
+   }
+}
+
+
+/*
+template <int maxnumplanes> __global__ void CrossMapNormalization_gradInput(float *input, float* gradOutput, float* gradInput, float *zsave, int iw, int nplanes, const float k, const float alpha, const float beta, const int n, int str0, int str1)
+{
+   // blockIdx.z  = [ 0, bs    ] ()
+   // blockIdx.y  = [ 0, ih    ] ()
+   // threadIdx.x = [ 0, 31    ] ()
+   
+
+   float alphan=alpha/n;
+
+   __shared__ float pixvalues[maxnumplanes];
    __shared__ float gradoutvalues[maxnumplanes];
    __shared__ float zvalues[maxnumplanes];
    
@@ -112,7 +169,7 @@ template <int maxnumplanes> __global__ void CrossMapNormalization_gradInput(floa
 }
 
 
-
+*/
 static int cunxn_CrossMapNormalization_updateOutput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
