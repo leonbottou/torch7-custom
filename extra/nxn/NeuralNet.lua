@@ -34,7 +34,6 @@ function NeuralNet:__init()
       self.weightdecay = 0            -- will put a L2-norm penalty on the weights
       
       self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
-      self.horizontalflip = false     -- should be true or false, will flip horizontally your input before feeding them to the net
       
       self.epochshuffle = false       -- should be true or false (shuffle the minibatch order at the beginning of each epoch)
       self.epochcount = 0             -- where the network is at
@@ -49,6 +48,7 @@ function NeuralNet:__init()
       self.testcostvalues = {}         -- we want to store the values of the cost during test passes
       
       self.lasttraincall = {}
+      self.gpumode = false
 end
 
 local function zapTensor(a)
@@ -59,7 +59,32 @@ local function zapTensor(a)
 end
 
 function NeuralNet:setNetwork(net)
-   self.network=net
+   self.rawnetwork=net
+   self.network=self.rawnetwork
+end
+
+function NeuralNet:gpu()
+   if not self.gpumode then
+      self.network=nxn.Sequential()
+      self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
+      self.network.modules[1].gradInput=nil
+      self.rawnetwork:clean()
+      self.rawnetwork:cuda()
+      self.network:add(self.rawnetwork)
+      self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
+      self.gpumode=true
+      collectgarbage()
+   end
+end
+
+function NeuralNet:cpu()
+   if self.gpumode then
+      self.rawnetwork:clean()
+      self.rawnetwork:float()
+      self.network=self.rawnetwork
+      self.gpumode=false
+      collectgarbage()
+   end
 end
 
 function NeuralNet:cleanNetwork()
@@ -74,6 +99,10 @@ function NeuralNet:setNumclasses(nclasses)
    self.confusion=optim.ConfusionMatrix(nclasses)
 end
 
+
+function NeuralNet:setJittering(xcrop, ycrop, flip)
+   self.jitter=nxn.Jitter(xcrop, ycrop, flip)
+end
 
 function NeuralNet:setCriterion(criterion)
    self.criterion=criterion
@@ -131,7 +160,13 @@ end
 
 function NeuralNet:saveNet()
    self:cleanNetwork()
-   torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+   if self.gpumode then 
+      self:cpu()
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+      self:gpu()
+   else
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)      
+   end
 end
 
 function NeuralNet:setEpochShuffle(epochshuffle)
@@ -173,10 +208,6 @@ function NeuralNet:setWeightupperbound(weightupperbound)
    self.weightupperbound=weightupperbound
 end
 
-function NeuralNet:setHorizontalflip(horizontalflip)
-   self.horizontalflip=horizontalflip
-end
-
 
 
 -- you can change these to load another kind of batches...
@@ -187,6 +218,10 @@ function NeuralNet:getBatch(batchidx)
    self:expandMeanoverset(batch)
    if self.meanoverset then
       batch:add(-1, self.meanoverset:expandAs(batch))
+   end
+   if self.jitter then
+      self.jitter:forward(batch)
+      batch=self.jitter.output
    end
    local target=batchfile[2]
    return batch, target
@@ -202,6 +237,10 @@ function NeuralNet:getTestBatch(batchidx)
    self:expandMeanoverset(batch)
    if self.meanoverset then
       batch:add(-1, self.meanoverset)
+   end
+   if self.jitter then
+      self.jitter:forward(batch)
+      batch=self.jitter.output
    end
    local target=batchfile[2]
    return batch, target
@@ -249,6 +288,11 @@ function NeuralNet:plotError()
    end
 end
 
+function NeuralNet:setTestMode(value)
+   self.jitter:setTestMode(value)
+   self.network:setTestMode(value)
+end
+
 
 function NeuralNet:resume()
    self:train(self.lasttraincall[1],self.lasttraincall[2],self.lasttraincall[3])
@@ -260,7 +304,7 @@ function NeuralNet:test()
    local meancost=0
    local numexamples=0
    -- run on validation set :
-   self.network:setTestMode(true)
+   self:setTestMode(true)
    for valbatchidx=self.testset[1],self.testset[2] do
       local valbatch,valtarget=self:getTestBatch(valbatchidx)  
       
@@ -274,7 +318,7 @@ function NeuralNet:test()
          end
       end
    end
-   self.network:setTestMode(false)
+   self:setTestMode(false)
    meancost=meancost/numexamples
    self.confusion:updateValids()
    print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
@@ -388,17 +432,17 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    if not self.nclasses then
       error('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
-   
-   
-   
-   
+  
+   if not self.gpumode then
+      print('running on CPU : use NeuralNet:gpu() ')
+   end
    
    
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
       -- put all modules in train mode (useful for dropout)
-      self.network:setTestMode(false)
+      self:setTestMode(false)
 
       -- init 
       if self.batchcount > self.trainsetsize then

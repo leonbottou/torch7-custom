@@ -32,12 +32,12 @@ end
 function Jitter:updateOutput(input)
    
    if self.testmode then
-      self.xstart=math.floor(self.xcrop/2)
-      self.ystart=math.floor(self.ycrop/2)
+      self.xstart=math.floor(1+self.xcrop/2)
+      self.ystart=math.floor(1+self.ycrop/2)
       self.randflip=0
    else
-      self.xstart=math.random(1,self.xcrop)
-      self.ystart=math.random(1,self.ycrop)
+      self.xstart=math.random(1,self.xcrop+1)
+      self.ystart=math.random(1,self.ycrop+1)
       self.randflip=torch.bernoulli(0.5)
    end
    

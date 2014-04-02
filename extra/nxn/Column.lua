@@ -131,6 +131,43 @@ function Column:reset(stdv)
    end
 end
 
+function Column:getDisposableTensors()
+   local tbl={self.output, self.gradInput}
+   for key,param in pairs(self.inputs) do
+      table.insert(tbl, param)
+   end
+   for key,param in pairs(self.gradOutputs) do
+      table.insert(tbl, param)
+   end
+   return tbl
+end
+
+function Column:type(type)
+   -- find all tensors and convert them
+   for key,param in pairs(self) do
+      if torch.typename(param) and torch.typename(param):find('torch%..+Tensor') then
+         self[key] = param:type(type)
+      end
+   end
+   for key,param in pairs(self.inputs) do
+      if torch.typename(param) and torch.typename(param):find('torch%..+Tensor') then
+         self.inputs[key] = param:type(type)
+      end
+   end
+   for key,param in pairs(self.gradOutputs) do
+      if torch.typename(param) and torch.typename(param):find('torch%..+Tensor') then
+         self.gradOutputs[key] = param:type(type)
+      end
+   end
+   -- find submodules in classic containers 'modules'
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:type(type)
+      end
+   end
+   return self
+end
+
 function Column:parameters()
    local function tinsert(to, from)
       if type(from) == 'table' then

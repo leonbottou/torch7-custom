@@ -156,7 +156,9 @@ end
 local function zapTensor(a)
    if a then 
       a:resize(0)
-      a:storage():resize(0) 
+      if a:storage() then
+         a:storage():resize(0) 
+      end
    end
 end
 
