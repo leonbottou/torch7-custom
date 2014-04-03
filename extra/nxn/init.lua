@@ -26,6 +26,7 @@ include('Linear.lua')
 include('Reshape.lua')
 include('ClassNLLCriterion.lua')
 include('LogSoftMax.lua')
+include('Resize.lua')
 
 include('ConvProto.lua')
 include('testSgemm.lua')

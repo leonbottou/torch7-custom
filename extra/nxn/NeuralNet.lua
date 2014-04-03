@@ -89,6 +89,7 @@ end
 
 function NeuralNet:cleanNetwork()
    self.network:clean()
+   self.jitter:clean()
    -- clean meanoverset tensor
    zapTensor(self.meanoverset)
    self.meanoverset=nil
