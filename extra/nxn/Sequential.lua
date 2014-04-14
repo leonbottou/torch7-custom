@@ -6,7 +6,9 @@ end
 
 function Sequential:add(module)
    if #self.modules == 0 then
-      self.gradInput = module.gradInput
+      if module.gradInput then
+         self.gradInput = module.gradInput
+      end
    end
    table.insert(self.modules, module)
    self.output = module.output

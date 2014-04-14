@@ -10,7 +10,7 @@ local Dataset = torch.class('nxn.Dataset')
 -- note : if you want to use the example generator you have to build your dataset as a table of samples : 
 -- dataTable={sample1, sample2, sample3} where sample1={'path/to/image.jpg', label}
 
--- if you want your dataset shuffled, do Dataset:shuffle() before generating stuff...
+-- if you want your dataset shuffled, do Dataset:shuffleOrder() before generating stuff...
 
 function Dataset:__init()
    self.dataTable={}
@@ -58,7 +58,7 @@ function Dataset:generateSample(idx)
    return sample, torch.FloatTensor(1):fill(foo[2])
 end
 
-function Dataset:shuffle()
+function Dataset:shuffleOrder()
    self.shuffle=torch.randperm(#self.dataTable)
 end
 

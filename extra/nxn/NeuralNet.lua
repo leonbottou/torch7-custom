@@ -89,7 +89,7 @@ end
 
 function NeuralNet:cleanNetwork()
    self.network:clean()
-   self.jitter:clean()
+   if self.jitter then if self.jitter.clean then self.jitter:clean() end end
    -- clean meanoverset tensor
    zapTensor(self.meanoverset)
    self.meanoverset=nil
@@ -255,9 +255,9 @@ function NeuralNet:getNumBatchesSeen()
 end
 
 
-function nxn.NeuralNet:showL1Filters()
+function NeuralNet:showL1Filters()
    local p,g = self.network:parameters()
-   foo=p[1]:float()
+   local foo=p[1]:float()
    foo=foo:transpose(3,4):transpose(1,2):transpose(2,3)
    image.display({image=foo, zoom=3, padding=1}) 
 end
@@ -313,18 +313,25 @@ function NeuralNet:test()
       self.criterion:forward(self.network.output, valtarget)
       meancost=meancost+self.criterion.output
       numexamples=numexamples+valbatch:size(1)
-      if self.network.output:dim()==2 then
-         for k=1,valbatch:size(1) do
-            self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+      if self.confusion then
+         if self.network.output:dim()==2 then
+            for k=1,valbatch:size(1) do
+               self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+            end
          end
       end
    end
    self:setTestMode(false)
    meancost=meancost/numexamples
-   self.confusion:updateValids()
-   print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
-   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
-   self.confusion:zero()
+   if self.confusion then 
+      self.confusion:updateValids() 
+      print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
+      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
+      self.confusion:zero()
+   else
+      print('mean cost on validation set : '..meancost)
+      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, -1})
+   end
    
 end
 
@@ -349,17 +356,20 @@ function NeuralNet:forwardprop(input, target, timer, batchidx)
    self.criterion:forward(self.network.output, target)
    
    -- confusion : only interesting for classification
-   if self.network.output:dim()==2 then
-      for k=1,input:size(1) do
-         self.confusion:add(self.network.output[{k,{}}], target[{k}])
+   if self.confusion then 
+      if self.network.output:dim()==2 then
+         for k=1,input:size(1) do
+            self.confusion:add(self.network.output[{k,{}}], target[{k}])
+         end
+         self.confusion:updateValids()
       end
-      self.confusion:updateValids()
-   end
-   
    print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
       table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), self.confusion.averageValid*100})
    self.confusion:zero()
-
+   else
+   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', time : '..time:time().real)   
+      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), -1})
+   end   
 end
 
 
@@ -431,7 +441,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    end
    
    if not self.nclasses then
-      error('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
+      print('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
   
    if not self.gpumode then
@@ -484,7 +494,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
             self:measure()
             self:test()
             self:plotError()
-         end
+         end     
       end
       
       if savefrequency then
