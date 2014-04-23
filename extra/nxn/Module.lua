@@ -3,6 +3,9 @@ local Module = torch.class('nxn.Module')
 function Module:__init()
    self.gradInput = torch.Tensor()
    self.output = torch.Tensor()
+   self.doBackProp = true
+   self.requiresGradients = true
+   self.name = ''
 end
 
 function Module:parameters()
@@ -32,35 +35,11 @@ function Module:backward(input, gradOutput, scale)
    return self.gradInput
 end
 
-function Module:backwardUpdate(input, gradOutput, lr)
-   self:updateGradInput(input, gradOutput)
-   self:accUpdateGradParameters(input, gradOutput, lr)
-   return self.gradInput
-end
-
 function Module:updateGradInput(input, gradOutput)
    return self.gradInput
 end
 
 function Module:accGradParameters(input, gradOutput, scale)
-end
-
-function Module:accUpdateGradParameters(input, gradOutput, lr)
-   local gradWeight = self.gradWeight
-   local gradBias = self.gradBias
-   self.gradWeight = self.weight
-   self.gradBias = self.bias
-   self:accGradParameters(input, gradOutput, -lr)
-   self.gradWeight = gradWeight
-   self.gradBias = gradBias
-end
-
-function Module:sharedAccUpdateGradParameters(input, gradOutput, lr)
-   if self:parameters() then
-      self:zeroGradParameters()
-      self:accGradParameters(input, gradOutput, 1)
-      self:updateParameters(lr)
-   end
 end
 
 function Module:zeroGradParameters()
@@ -70,27 +49,19 @@ function Module:zeroGradParameters()
          gradParams[i]:zero()
       end
    end
-end
-
-function Module:updateParameters(learningRate)
-   local params, gradParams = self:parameters()
-   if params then
-      for i=1,#params do
-         params[i]:add(-learningRate, gradParams[i])
+   if self.modules then 
+      for i=1,#self.modules do
+        self.modules[i]:zeroGradParameters()
       end
    end
 end
 
-function Module:share(mlp, ...)
-   local arg = {...}
-   for i,v in ipairs(arg) do
-      if self[v] ~= nil then
-         self[v]:set(mlp[v])
-         self.accUpdateGradParameters = self.sharedAccUpdateGradParameters
-         mlp.accUpdateGradParameters = mlp.sharedAccUpdateGradParameters
+function Module:updateParameters()
+   if self.modules then 
+      for i=1,#self.modules do
+         self.modules[i]:updateParameters()
       end
    end
-   return self      
 end
 
 function Module:clone(...)
@@ -178,26 +149,6 @@ function Module:clean()
    end   
 end
 
-function Module:zeroGradInputs()
-   if self.gradInput then
-      self.gradInput:zero()
-   end 
-   if self.modules then
-      for _,module in ipairs(self.modules) do
-         if module.zeroGradInputs then module:zeroGradInputs() end
-      end
-   end
-end
-
-function Module:setAddGrads(value)
-   if self.addgrads then 
-      self.addgrads=value 
-   end
-   if self.modules then
-      self.modules[1]:setAddGrads(value) 
-   end
-end
-
 function Module:float()
    return self:type('torch.FloatTensor')
 end
@@ -213,81 +164,6 @@ end
 function Module:reset()
 end
 
-function Module:getParameters()
-   -- get parameters
-   local parameters,gradParameters = self:parameters()
-
-   local function storageInSet(set, storage)
-      local storageAndOffset = set[torch.pointer(storage)]
-      if storageAndOffset == nil then
-          return nil
-      end
-      local storage, offset = unpack(storageAndOffset)
-      return offset
-   end
-
-   -- this function flattens arbitrary lists of parameters,
-   -- even complex shared ones
-   local function flatten(parameters)
-      local Tensor = parameters[1].new
-
-      local storages = {}
-      local nParameters = 0
-      for k = 1,#parameters do
-         local storage = parameters[k]:storage()
-         if not storageInSet(storages, storage) then
-            storages[torch.pointer(storage)] = {storage, nParameters}
-            nParameters = nParameters + storage:size()
-         end
-      end
-      
-      local flatParameters = Tensor(nParameters):fill(1)
-      local flatStorage = flatParameters:storage()
-
-      for k = 1,#parameters do
-         local storageOffset = storageInSet(storages, parameters[k]:storage())
-         parameters[k]:set(flatStorage,
-                           storageOffset + parameters[k]:storageOffset(),
-                           parameters[k]:size(),
-                           parameters[k]:stride())
-         parameters[k]:zero()
-      end
-
-      local cumSumOfHoles = flatParameters:float():cumsum(1)
-      local nUsedParameters = nParameters - cumSumOfHoles[#cumSumOfHoles]
-      local flatUsedParameters = Tensor(nUsedParameters)
-      local flatUsedStorage = flatUsedParameters:storage()
-
-      for k = 1,#parameters do
-         local offset = cumSumOfHoles[parameters[k]:storageOffset()]
-         parameters[k]:set(flatUsedStorage,
-         parameters[k]:storageOffset() - offset,
-         parameters[k]:size(),
-         parameters[k]:stride())
-      end
-
-      for _, storageAndOffset in pairs(storages) do
-         local k, v = unpack(storageAndOffset)
-         flatParameters[{{v+1,v+k:size()}}]:copy(Tensor():set(k))
-      end
-      if cumSumOfHoles:sum() == 0 then
-         flatUsedParameters:copy(flatParameters)
-      else
-         for k = 1,flatUsedParameters:nElement() do
-            flatUsedParameters[k] = flatParameters[k+cumSumOfHoles[k]]
-         end
-      end
-      return flatUsedParameters
-   end
-
-   -- flatten parameters and gradients
-   local flatParameters = flatten(parameters)
-   local flatGradParameters = flatten(gradParameters)
-
-   -- return new flat vector that contains all discrete parameters
-   return flatParameters, flatGradParameters
-end
-
 function Module:__call__(input, gradOutput)
    self:forward(input)
    if gradOutput then
@@ -297,3 +173,65 @@ function Module:__call__(input, gradOutput)
       return self.output
    end
 end
+
+function Module:setBackProp(BPbool)
+   -- returns whether the module needs gradients or not
+   self.doBackProp = BPbool or false
+   self.requiresGradients=self:needGradients()
+   return self.requiresGradients or self.doBackProp
+end
+
+function Module:needGradients()
+   return false
+end
+
+function Module:setLearningRate(...)
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:setLearningRate(...) 
+      end
+   end
+end
+
+function Module:setMomentum(...)
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:setMomentum(...) 
+      end
+   end
+end
+
+function Module:setWeightDecay(...)
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:setWeightDecay(...) 
+      end
+   end
+end
+
+      
+function Module:getByName(name)
+   if self.name==name then 
+      return self 
+   end 
+   if self.modules then
+      local mod
+      local count=0
+      for idx=1,#self.modules do
+         if self.modules[idx]:getByName(name) then
+            count=count+1
+            mod = self.modules[idx]:getByName(name)
+         end 
+      end
+      if count==1 then return mod end
+      if count==0 then return end
+      if count >1 then error('error : many layers with name '..name) end
+   end
+end
+
+function Module:setName(name)
+   self.name=name
+end
+
+
+

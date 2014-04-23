@@ -12,73 +12,92 @@ local Dataset = torch.class('nxn.Dataset')
 
 -- if you want your dataset shuffled, do Dataset:shuffleOrder() before generating stuff...
 
-function Dataset:__init()
-   self.dataTable={}
-   self.targetDir=nil
+function Dataset:__init(folder)
+
    self.batchSize=128
    self.shuffle=nil
    self.meanoverset=nil
    self.nextbatch=0
-   self.x=256
-   self.y=256
+   self.numSamples=nil
+   self.finished=false
+   self.realMeanOverSet=nil
+
+   if folder then self:setTargetDir(folder) end
+   
 end
 
-function Dataset:setDataTable(dataTable)
-   self.dataTable=dataTable
-   self.shuffle=torch.range(1,#self.dataTable)
+function Dataset:getNumBatches()
+   return math.floor(self.numSamples/self.batchSize)
 end
 
-function Dataset:setSizes(x,y)
-   self.x=x
-   self.y=y
+function Dataset:setSize(numSamples)
+   self.numSamples=numSamples
+   self.shuffle=torch.range(1,self.numSamples)
+   print('shuffle the order of samples with Dataset:shuffleOrder()')
+end
+
+function Dataset:shuffleOrder()
+   self.shuffle=torch.randperm(self.numSamples)
 end
 
 function Dataset:setTargetDir(targetDir)
    self.targetDir=targetDir
+   if paths.filep(paths.concat(self.targetDir, 'dataGeneratorState.t7')) then
+      self:load()
+      print ('loaded dataset from '..self.targetDir)
+   end
 end
 
 function Dataset:setBatchSize(batchSize)
    self.batchSize=batchSize
 end
 
+   -- this function has to return a path to an image and a label
+function Dataset:getInstance(idx)
+   return path, labelnumber
+end
+
 function Dataset:generateSample(idx)
    require 'image'
-   -- this example generator will load an RGB image from the data table and return a self.x*self.y RGB image + the label
+   -- this example generator will load an RGB image from the data table and return a 256*256 RGB image + the label
    -- if the images are already in self.x*self.y RGB format, then they are just returned with the correct transposition (y,x,channels)
-   local foo=self.dataTable[idx]
-   local img0=image.load(foo[1], 3, 'byte')
+
+   local path, target = self:getInstance(idx)
+   local img0=image.load(path, 3, 'byte')
    
    local sample
-   if (#img0)[1]~=3 or (#img0)[2]~=self.y or (#img0)[3]~=self.x then
+   if (#img0)[1]~=3 or (#img0)[2]~=256 or (#img0)[3]~=256 then
       sample=image.scale(img0, 256, 256):transpose(1,2):transpose(2,3)
    else
       sample=img0:transpose(1,2):transpose(2,3)
    end
    
-   return sample, torch.FloatTensor(1):fill(foo[2])
+   return sample, torch.FloatTensor(1):fill(target)
 end
 
-function Dataset:shuffleOrder()
-   self.shuffle=torch.randperm(#self.dataTable)
-end
 
-function Dataset:resume()
+function Dataset:load()
    local foo=torch.load(paths.concat(self.targetDir, 'dataGeneratorState.t7'))
-   self.dataTable=foo.dataTable
+   self.getInstance=foo.getInstance
+   self.generateSample=foo.generateSample
+   self.numSamples=foo.numSamples
    self.targetDir=foo.targetDir
    self.batchSize=foo.batchSize
    self.shuffle=foo.shuffle
    self.meanoverset=foo.meanoverset
    self.nextbatch=foo.nextbatch
-   self.x=foo.x
-   self.y=foo.y
+   self.finished=foo.finished
+end
+
+function Dataset:resume()
    self:generateSet()
 end
 
 
 function Dataset:generateBatch(batchidx)
    local sampleExample,targetExample = self:generateSample(1)
-   local numbatches=math.floor(#self.dataTable/self.batchSize)
+   local numbatches=self:getNumBatches()
+
    if batchidx > numbatches then 
       error('idx must be < numbatches (= '..numbatches..')')
    end
@@ -126,7 +145,7 @@ function Dataset:generateSet()
       self.nextbatch=1
    end
 
-   local numbatches=math.floor(#self.dataTable/self.batchSize)
+   local numbatches=self:getNumBatches()
 
    for batchidx=self.nextbatch,numbatches do 
       
@@ -146,5 +165,45 @@ function Dataset:generateSet()
 
    self.meanoverset:div(numbatches)
    torch.save(paths.concat(self.targetDir, 'meanoverset.t7'), self.meanoverset)
+   self.finished=true
+   torch.save(paths.concat(self.targetDir, 'dataGeneratorState.t7'), self)
 end
+
+
+function Dataset:expandMeanoverset(batch)
+   if not self.realMeanOverSet then
+      local meanoverset = torch.load(paths.concat(self.targetDir, 'meanoverset.t7'))
+      local ls=torch.LongStorage(meanoverset:dim()+1):fill(1)
+      self.realMeanOverSet=torch.repeatTensor(meanoverset, ls)
+   end
+   if not self.realMeanOverSetBatch then
+      self.realMeanOverSetBatch=self.realMeanOverSet:expandAs(batch):contiguous()
+   end
+   if (self.realMeanOverSetBatch:size(1) ~= batch:size(1)) then
+      self.realMeanOverSetBatch=self.realMeanOverSet:expandAs(batch):contiguous()
+   end
+end
+
+function Dataset:getBatch(batchidx)
+   collectgarbage()
+   local batchfile=torch.load(paths.concat(self.targetDir, 'batch'..batchidx..'.t7'))
+   local batch=batchfile[1]:float()
+   self:expandMeanoverset(batch)
+   if self.realMeanOverSetBatch then
+      batch:add(-1, self.realMeanOverSetBatch)
+   end
+   local target=batchfile[2]
+   return batch, target
+end
+
+function Dataset:cacheBatch(batchidx)
+   os.execute('cp '..paths.concat(self.targetDir, 'batch'..batchidx..'.t7')..' /dev/null & ')
+end
+
+function Dataset:getTestBatch(batchidx)
+   local batch, target = self:getBatch(batchidx)
+   return batch, target
+end
+
+--
 

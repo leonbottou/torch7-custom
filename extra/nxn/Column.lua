@@ -65,63 +65,45 @@ end
 
 function Column:updateGradInput(input, gradOutput)
    local first=1
-   
-   for i=1,#self.modules do 
-      if not self.gradOutputs[i] then
-         self.gradOutputs[i]=input.new()
-      end
-      local outsplitsize=self.modules[i].output:size(self.modules[i].output:dim())
-      self.gradOutputs[i]:resizeAs(gradOutput:narrow(gradOutput:dim(), first, outsplitsize))
-      self.gradOutputs[i]:copy(gradOutput:narrow(gradOutput:dim(), first, outsplitsize))
-      first=first + outsplitsize
-      self.modules[i]:updateGradInput(self.inputs[i], self.gradOutputs[i])
-   end 
-   
-   self.gradInput:resizeAs(input)
-   
-   first=1
-   
-   for i=1,#self.splitSizes do
-      tgradInput = self.gradInput:narrow(input:dim(), first, self.splitSizes[i])
-      tgradInput:copy(self.modules[i].gradInput)
-      first=first+self.splitSizes[i]
-   end   
-   
-   return self.gradInput
+
+   if gradOutput then    
+      for i=1,#self.modules do 
+         if self.modules[i].requiresGradients or self.modules[i].doBackProp then
+            if not self.gradOutputs[i] then
+               self.gradOutputs[i]=input.new()
+            end
+            local outsplitsize=self.modules[i].output:size(self.modules[i].output:dim())
+            self.gradOutputs[i]:resizeAs(gradOutput:narrow(gradOutput:dim(), first, outsplitsize))
+            self.gradOutputs[i]:copy(gradOutput:narrow(gradOutput:dim(), first, outsplitsize))
+            first=first + outsplitsize
+            self.modules[i]:updateGradInput(self.inputs[i], self.gradOutputs[i])
+         end
+      end 
+   end
+
+   if self.doBackProp then   
+      self.gradInput:resizeAs(input)
+      
+      first=1
+      
+      for i=1,#self.splitSizes do
+         tgradInput = self.gradInput:narrow(input:dim(), first, self.splitSizes[i])
+         tgradInput:copy(self.modules[i].gradInput)
+         first=first+self.splitSizes[i]
+      end   
+      
+      return self.gradInput
+   end
 end
 
 function Column:accGradParameters(input, gradOutput, scale)
    scale = scale or 1
-   
-   for i=1,#self.modules do 
-      self.modules[i]:accGradParameters(self.inputs[i], self.gradOutputs[i], scale)
-   end   
-
-end
-
-function Column:accUpdateGradParameters(input, gradOutput, lr)
-   
-   for i=1,#self.modules do 
-      self.modules[i]:accUpdateGradParameters(self.inputs[i], self.gradOutputs[i], lr)
-   end   
-
-end
-
-function Column:zeroGradParameters()
-  for i=1,#self.modules do
-     self.modules[i]:zeroGradParameters()
-  end
-end
-
-function Column:updateParameters(learningRate)
-   for i=1,#self.modules do
-      self.modules[i]:updateParameters(learningRate)
-   end
-end
-
-function Column:share(mlp,...)
-   for i=1,#self.modules do
-      self.modules[i]:share(mlp.modules[i],...); 
+   if gradOutput then    
+      for i=1,#self.modules do 
+         if self.modules[i].requiresGradients or self.modules[i].doBackProp then
+            self.modules[i]:accGradParameters(self.inputs[i], self.gradOutputs[i], scale)
+         end
+      end   
    end
 end
 
@@ -191,18 +173,33 @@ function Column:parameters()
 end
 
 function Column:__tostring__()
-   local tab = '  '
+   local tab = '     '
    local line = '\n'
    local next = ' -> '
    local str = 'nxn.Column'
-   str = str .. ' {' .. line .. tab .. '[input'
-   for i=1,#self.modules do
-      str = str .. next .. '(' .. i .. ')'
-   end
-   str = str .. next .. 'output]'
+   str = str .. ' {'
    for i=1,#self.modules do
       str = str .. line .. tab .. '(' .. i .. '): ' .. tostring(self.modules[i]):gsub(line, line .. tab)
    end
    str = str .. line .. '}'
    return str
+end
+
+
+function Column:needGradients()
+   -- container needs the gradients if one of the modules does
+   local switch=false
+   for i=1,#self.modules do 
+      switch = switch or self.modules[i]:needGradients()
+   end 
+   return switch
+end
+
+function Column:setBackProp(BPbool)
+   self.doBackProp=false or BPbool
+   self.requiresGradients=self:needGradients()
+   for i=1,#self.modules do 
+      self.modules[i]:setBackProp(self.doBackProp)
+   end 
+   return self.requiresGradients or self.doBackProp
 end

@@ -6,9 +6,7 @@ end
 
 function Sequential:add(module)
    if #self.modules == 0 then
-      if module.gradInput then
-         self.gradInput = module.gradInput
-      end
+      self.gradInput = module.gradInput
    end
    table.insert(self.modules, module)
    self.output = module.output
@@ -24,9 +22,6 @@ function Sequential:get(index)
 end
 
 function Sequential:updateOutput(input)
-   -- compatibility with nxn.ColNewumn
-   self.modules[#self.modules].output=self.output
-   --
    local currentOutput = input
    for i=1,#self.modules do 
       currentOutput = self.modules[i]:updateOutput(currentOutput)
@@ -36,17 +31,18 @@ function Sequential:updateOutput(input)
 end
 
 function Sequential:updateGradInput(input, gradOutput)
-   -- compatibility with nxn.ColNewumn
-   if self.modules[1].gradInput then self.modules[1].gradInput=self.gradInput end
-   --
    local currentGradOutput = gradOutput
    local currentModule = self.modules[#self.modules]
    for i=#self.modules-1,1,-1 do
       local previousModule = self.modules[i]
-      currentGradOutput = currentModule:updateGradInput(previousModule.output, currentGradOutput)
+      if currentModule.requiresGradients or currentModule.doBackProp then
+         currentGradOutput = currentModule:updateGradInput(previousModule.output, currentGradOutput)
+      end
       currentModule = previousModule
    end
-   currentGradOutput = currentModule:updateGradInput(input, currentGradOutput)
+   if currentModule.requiresGradients or currentModule.doBackProp then
+      currentGradOutput = currentModule:updateGradInput(input, currentGradOutput)
+   end
    self.gradInput = currentGradOutput
    return currentGradOutput
 end
@@ -59,41 +55,14 @@ function Sequential:accGradParameters(input, gradOutput, scale)
    for i=#self.modules-1,1,-1 do
       local previousModule = self.modules[i]
       currentModule:accGradParameters(previousModule.output, currentGradOutput, scale)
-      currentGradOutput = currentModule.gradInput
+      if currentModule.requiresGradients or currentModule.doBackProp then
+         currentGradOutput = currentModule.gradInput
+      end
       currentModule = previousModule
    end
    
-   currentModule:accGradParameters(input, currentGradOutput, scale)
-end
-
-function Sequential:accUpdateGradParameters(input, gradOutput, lr)
-   local currentGradOutput = gradOutput
-   local currentModule = self.modules[#self.modules]
-   for i=#self.modules-1,1,-1 do
-      local previousModule = self.modules[i]
-      currentModule:accUpdateGradParameters(previousModule.output, currentGradOutput, lr)
-      currentGradOutput = currentModule.gradInput
-      currentModule = previousModule
-   end
-   
-   currentModule:accUpdateGradParameters(input, currentGradOutput, lr)
-end
-
-function Sequential:zeroGradParameters()
-  for i=1,#self.modules do
-     self.modules[i]:zeroGradParameters()
-  end
-end
-
-function Sequential:updateParameters(learningRate)
-   for i=1,#self.modules do
-      self.modules[i]:updateParameters(learningRate)
-   end
-end
-
-function Sequential:share(mlp,...)
-   for i=1,#self.modules do
-      self.modules[i]:share(mlp.modules[i],...); 
+   if currentModule.requiresGradients or currentModule.doBackProp then
+      currentModule:accGradParameters(input, currentGradOutput, scale)
    end
 end
 
@@ -126,7 +95,7 @@ function Sequential:parameters()
 end
 
 function Sequential:__tostring__()
-   local tab = '  '
+   local tab = '     '
    local line = '\n'
    local next = ' -> '
    local str = 'nxn.Sequential'
@@ -140,4 +109,23 @@ function Sequential:__tostring__()
    end
    str = str .. line .. '}'
    return str
+end
+
+function Sequential:needGradients()
+   -- container needs the gradients if one of the modules does
+   local switch=false
+   for i=1,#self.modules do 
+      switch = switch or self.modules[i]:needGradients()
+   end 
+   return switch
+end
+
+function Sequential:setBackProp(BPbool)
+   self.doBackProp=false or BPbool
+   self.requiresGradients=self:needGradients()
+   local switch=self.doBackProp
+   for i=1,#self.modules do 
+      switch = self.modules[i]:setBackProp(switch)
+   end 
+   return self.requiresGradients or self.doBackProp
 end

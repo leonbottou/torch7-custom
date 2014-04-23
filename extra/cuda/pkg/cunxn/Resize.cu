@@ -6,6 +6,7 @@
     };
 #endif
 
+
 static texture<float4, cudaTextureType2DLayered> texRef;
 
 __global__ void resizeKernel(float* outptr, int outstr0, int outstr1, int outstr2, int outstr3, int outx)
@@ -54,7 +55,7 @@ __global__ void resizeTiledKernel(float* outptr, int outstr0, int outstr1, int o
    // read :
       out    = tex2DLayered(texRef, coordx, coordy, blockIdx.z);
       ok=1;
-   
+   }
 
    // spread one line :
    for (int ty=0; ty<4; ty++)
@@ -78,9 +79,6 @@ __global__ void resizeTiledKernel(float* outptr, int outstr0, int outstr1, int o
          }
       }
    }
-   }
-
-
 }
 
 

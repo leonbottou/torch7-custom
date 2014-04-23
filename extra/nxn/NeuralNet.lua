@@ -27,20 +27,10 @@ function NeuralNet:__init()
       
       self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
       
-      -- optional stuff
-      self.momentum = 0               -- should be between 0 and 1
-      self.learningrate = 0           -- optional, but if you want to train... well, you know.
-      self.lrdecay = 0                -- will decay like : LR(t) = learningrate / ( 1 + lrdecay * number of batches seen by the net )
-      self.weightdecay = 0            -- will put a L2-norm penalty on the weights
-      
-      self.inputtype = 'torch.FloatTensor' -- stick to this if you want to CUDA your net
-      
       self.epochshuffle = false       -- should be true or false (shuffle the minibatch order at the beginning of each epoch)
       self.epochcount = 0             -- where the network is at
       self.batchcount = 0             -- where the network is at
-      self.gradupperbound = nil       -- L2-norm constraint on the gradients : if a gradient violates the constraint, it will be projected on the L2 unit-ball
-      self.weightupperbound = nil     -- L2-norm constraint on the weights : if a filter violates the constraint, it will be projected on the L2 unit-ball
-      
+
       self.nclasses = nil             -- number of classes of the net output
       self.confusion = nil            -- confusion matrix, useful for monitoring the training
       
@@ -59,40 +49,12 @@ local function zapTensor(a)
 end
 
 function NeuralNet:setNetwork(net)
-   self.rawnetwork=net
-   self.network=self.rawnetwork
+   self.network=net
 end
 
-function NeuralNet:gpu()
-   if not self.gpumode then
-      self.network=nxn.Sequential()
-      self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
-      self.network.modules[1].gradInput=nil
-      self.rawnetwork:clean()
-      self.rawnetwork:cuda()
-      self.network:add(self.rawnetwork)
-      self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
-      self.gpumode=true
-      collectgarbage()
-   end
-end
-
-function NeuralNet:cpu()
-   if self.gpumode then
-      self.rawnetwork:clean()
-      self.rawnetwork:float()
-      self.network=self.rawnetwork
-      self.gpumode=false
-      collectgarbage()
-   end
-end
 
 function NeuralNet:cleanNetwork()
    self.network:clean()
-   if self.jitter then if self.jitter.clean then self.jitter:clean() end end
-   -- clean meanoverset tensor
-   zapTensor(self.meanoverset)
-   self.meanoverset=nil
 end
 
 function NeuralNet:setNumclasses(nclasses)
@@ -100,74 +62,41 @@ function NeuralNet:setNumclasses(nclasses)
    self.confusion=optim.ConfusionMatrix(nclasses)
 end
 
-
-function NeuralNet:setJittering(xcrop, ycrop, flip)
-   self.jitter=nxn.Jitter(xcrop, ycrop, flip)
-end
-
 function NeuralNet:setCriterion(criterion)
    self.criterion=criterion
    self.criterion.sizeAverage=false
 end
 
-
-function NeuralNet:setMeanoverset(meanoverset)
-   newsizes=torch.LongStorage(meanoverset:dim()+1)
-   newsizes[1]=1
-   for i=1,meanoverset:dim() do
-      newsizes[i+1]=meanoverset:size(i)
-   end
-   self.meanoversetsave=meanoverset:resize(newsizes)
+function NeuralNet:setDataset(dataset)
+   -- we want a nxn.Dataset here
+   self.dataset=dataset
 end
-
-function NeuralNet:expandMeanoverset(batch)
-   if not self.meanoverset then
-      self.meanoverset=self.meanoversetsave:expandAs(batch):contiguous()
-   end
-   if (self.meanoverset:size(1) ~= batch:size(1)) then
-      self.meanoverset=self.meanoversetsave:expandAs(batch):contiguous()
-   end
-end
-
-function NeuralNet:setDatasetdir(datasetdir)
-   self.datasetdir=datasetdir
-   if paths.filep(paths.concat(self.datasetdir, 'meanoverset.t7')) then
-      self:setMeanoverset(torch.load(paths.concat(self.datasetdir, 'meanoverset.t7')))
-   end
-end
-
 
 function NeuralNet:setTrainsetRange(first, last)
-   self.trainset={first, last}
-   self.trainsetsize=last-first+1
-   
+   local numbatches = self.dataset:getNumBatches()
+   if first >= 1 and last >= first and last <= numbatches then
+      self.trainset={first, last}
+      self.trainsetsize=last-first+1
+   else error(' ... ')
+   end
 end
-
 
 function NeuralNet:setTestsetRange(first, last)
-   self.testset={first, last}
+   local numbatches = self.dataset:getNumBatches()
+   if first >= 1 and last >= first and last <= numbatches then
+      self.testset={first, last}
+   else error(' ... ')
+   end
 end
-
-function NeuralNet:setInputType(tensortype)
-   self.inputtype=tensortype
-end
-
 
 function NeuralNet:setCheckpoint(checkpointdir, checkpointname)
    self.checkpointdir=checkpointdir
    self.checkpointname=checkpointname
 end
 
-
 function NeuralNet:saveNet()
    self:cleanNetwork()
-   if self.gpumode then 
-      self:cpu()
-      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
-      self:gpu()
-   else
-      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)      
-   end
+   torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
 end
 
 function NeuralNet:setEpochShuffle(epochshuffle)
@@ -182,69 +111,26 @@ function NeuralNet:getBatchNum(idx)
    return self.trainset[1]+self.batchshuffle[idx]-1
 end
 
-function NeuralNet:setMomentum(momentum)
-   self.momentum=momentum
+function NeuralNet:getByName(name)
+   return self.network:getByName(name)
 end
 
-
-function NeuralNet:setLearningrate(learningrate)
-   self.learningrate=learningrate
+function NeuralNet:__call__(name)
+   return self.network:getByName(name)
 end
-
-
-function NeuralNet:setLRdecay(lrdecay)
-   self.lrdecay=lrdecay
-end
-
-
-function NeuralNet:setWeightdecay(weightdecay)
-   self.weightdecay=weightdecay
-end
-
-function NeuralNet:setGradupperbound(gradupperbound)
-   self.gradupperbound=gradupperbound
-end
-
-function NeuralNet:setWeightupperbound(weightupperbound)
-   self.weightupperbound=weightupperbound
-end
-
-
 
 -- you can change these to load another kind of batches...
 
 function NeuralNet:getBatch(batchidx)
-   local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
-   local batch=batchfile[1]:type(self.inputtype)
-   self:expandMeanoverset(batch)
-   if self.meanoverset then
-      batch:add(-1, self.meanoverset:expandAs(batch))
-   end
-   if self.jitter then
-      self.jitter:forward(batch)
-      batch=self.jitter.output
-   end
-   local target=batchfile[2]
-   return batch, target
+   return self.dataset:getBatch(batchidx)
 end
 
 function NeuralNet:cacheBatch(batchidx)
-   os.execute('cp '..paths.concat(self.datasetdir, 'batch'..batchidx..'.t7')..' /dev/null & ')
+   return self.dataset:cacheBatch(batchidx)
 end
 
 function NeuralNet:getTestBatch(batchidx)
-   local batchfile=torch.load(paths.concat(self.datasetdir, 'batch'..batchidx..'.t7'))
-   local batch=batchfile[1]:type(self.inputtype)
-   self:expandMeanoverset(batch)
-   if self.meanoverset then
-      batch:add(-1, self.meanoverset)
-   end
-   if self.jitter then
-      self.jitter:forward(batch)
-      batch=self.jitter.output
-   end
-   local target=batchfile[2]
-   return batch, target
+   return self:getBatch(batchidx)
 end
 
 --
@@ -283,14 +169,16 @@ function NeuralNet:plotError()
    end
    
    if ntestpoints>0 then
-   gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Validation set cost', testcostindices/self.trainsetsize, testcostvector,'-'})
+   gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
+   {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
+   {'Validation set cost', testcostindices/self.trainsetsize, testcostvector,'-'})
    else
-      gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},{'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'})
+      gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
+      {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'})
    end
 end
 
 function NeuralNet:setTestMode(value)
-   self.jitter:setTestMode(value)
    self.network:setTestMode(value)
 end
 
@@ -376,34 +264,11 @@ end
 function NeuralNet:backpropUpdate(input, df_do, target, lr)
    local params, gradients =self.network:parameters()
    
-   -- apply momentum :
-   for idx=1,#gradients do 
-      gradients[idx]:mul(self.momentum)
-   end
-   
    -- compute and accumulate gradients
    self.network:backward(input, df_do, lr/input:size(1))
-   
-   -- apply weight decay :
-   for idx=1,#gradients do
-      gradients[idx]:add(self.weightdecay*lr, params[idx])
-   end
-   
-   -- clip gradients
-   if self.gradupperbound then
-      for idx=1,#gradients do
-         local gnorm=gradients[idx]:norm()
-         if gnorm > self.gradupperbound then
-            gradients[idx]:mul(self.gradupperbound/gnorm)
-         end
-      end
-   end
 
-   self.network:updateParameters(1)
+   self.network:updateParameters()
    
-   if self.weightupperbound then
-      self.network:clipWeights(self.weightupperbound)
-   end
    self.batchcount = self.batchcount + 1
 end
 
@@ -448,12 +313,12 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       print('running on CPU : use NeuralNet:gpu() ')
    end
    
-   
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
       -- put all modules in train mode (useful for dropout)
       self:setTestMode(false)
+      self.network:setBackProp()   
 
       -- init 
       if self.batchcount > self.trainsetsize then
@@ -485,7 +350,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       
       -- backward :
       local df_do=self.criterion:backward(self.network.output, target)
-      local currentlr = self.learningrate / (1 + self.lrdecay * self:getNumBatchesSeen())
+      local currentlr = 1
       local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
       if not successb then error(errormsgb..' during backprop') end
       

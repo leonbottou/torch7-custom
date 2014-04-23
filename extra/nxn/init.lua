@@ -4,33 +4,40 @@ require('libnxn')
 include('Module.lua')
 include('Sequential.lua')
 include('Column.lua')
-include('ColNewumn.lua')
+--include('ConvLayer.lua')
+include('SpatialConvolution.lua')
 include('Copy.lua')
-include('Criterion.lua')
-
-include('Dataset.lua')
-include('LargeDataset.lua')
+include('Reshape.lua')
 
 include('ReLU.lua')
 include('Affine.lua')
 include('Dropout.lua')
 include('Dropmap.lua')
-include('SpatialConvolution.lua')
-include('ConvLayer.lua')
 include('SpatialGlobalMaxPooling.lua')
 include('SpatialMaxPooling.lua')
-include('CrossMapNormalization.lua')
 include('SoftMax.lua')
-include('NeuralNet.lua')
-include('Jitter.lua')
+include('CrossMapNormalization.lua')
 
-include('Linear.lua')
-include('Reshape.lua')
+include('Criterion.lua')
 include('ClassNLLCriterion.lua')
 include('MultiClassNLLCriterion.lua')
 include('LogSoftMax.lua')
+
+include('Jitter.lua')
 include('Resize.lua')
 
+include('NeuralNet.lua')
+include('Dataset.lua')
+
+if false then 
+
+include('LargeDataset.lua')
+
+
+include('Linear.lua')
+
 include('ConvProto.lua')
+end
+
 include('testSgemm.lua')
 
