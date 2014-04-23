@@ -95,7 +95,7 @@ function Sequential:parameters()
 end
 
 function Sequential:__tostring__()
-   local tab = '     '
+   local tab = '     |  '
    local line = '\n'
    local next = ' -> '
    local str = 'nxn.Sequential'

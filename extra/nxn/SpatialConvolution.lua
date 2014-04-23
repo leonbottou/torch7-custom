@@ -401,8 +401,8 @@ function nxn.SpatialConvolution:__tostring__()
    str = str .. 'params      : LR : '.. self.learningRate ..', momentum : ' .. self.momentum ..', weight decay : '.. self.weightDecay
    str = str .. line .. tab
    str = str .. 'output      : ' .. tensorsizestring(self.output)
-   str = str .. line .. tab
-   str = str .. 'gradInput   : ' .. tensorsizestring(self.gradInput)
+   --str = str .. line .. tab
+   --str = str .. 'gradInput   : ' .. tensorsizestring(self.gradInput)
    str = str .. line
 
    return str

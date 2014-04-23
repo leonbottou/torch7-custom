@@ -75,6 +75,9 @@ function Dataset:generateSample(idx)
    return sample, torch.FloatTensor(1):fill(target)
 end
 
+function Dataset.loadSet(folder)
+   return torch.load(paths.concat(folder, 'dataGeneratorState.t7'))
+end
 
 function Dataset:load()
    local foo=torch.load(paths.concat(self.targetDir, 'dataGeneratorState.t7'))
