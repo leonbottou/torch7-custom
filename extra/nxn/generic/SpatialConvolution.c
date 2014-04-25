@@ -47,10 +47,15 @@ static int nxn_(SpatialConvolution_updateOutput)(lua_State *L)
   real beta = luaT_getfieldchecknumber(L, 1, "beta");
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
   THTensor *bias = luaT_getfieldcheckudata(L, 1, "bias", torch_Tensor);
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
 
+  THTensor *weight = luaT_getfieldcheckudata(L, 1, "tmpweight", torch_Tensor);
+  THTensor *tmpweight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  printf("transposing");
+  THTensor_(transpose)(weight,tmpweight, 0, 1);
+  weight = THTensor_(newContiguous)(weight);
+  printf("transposing done");
 
 #if 0
   int dimw = 2;
@@ -267,7 +272,14 @@ static int nxn_(SpatialConvolution_updateGradInput)(lua_State *L)
   //assert(overlap==1);
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+
+  THTensor *weight = luaT_getfieldcheckudata(L, 1, "tmpweight", torch_Tensor);
+  THTensor *tmpweight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  printf("transposing");
+  THTensor_(transpose)(weight,tmpweight, 0, 1);
+  weight = THTensor_(newContiguous)(weight);
+  printf("transposing done");
+
   THTensor *revk;
   THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
 
@@ -651,7 +663,14 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
   real beta = luaT_getfieldchecknumber(L, 1, "beta");
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-  THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
+  THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "tmpgradweight", torch_Tensor);
+  THTensor *tmpgradweight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
+  printf("transposing");
+  THTensor_(transpose)(gradWeight,tmpgradweight, 0, 1);
+  gradWeight = THTensor_(newContiguous)(gradWeight);
+  printf("transposing done");
+
+
   THTensor *gradBias = luaT_getfieldcheckudata(L, 1, "gradBias", torch_Tensor);
 
 
@@ -833,6 +852,11 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
               1, kptr, kw*ip ); 
       }
    }
+
+  printf("transposing");
+  THTensor_(transpose)(tmpgradweight,gradWeight, 0, 1);
+  tmpgradweight = THTensor_(newContiguous)(tmpgradweight);
+  printf("transposing done");
 
 
   THTensor_(free)(icopy);

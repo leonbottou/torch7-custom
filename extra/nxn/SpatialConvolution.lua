@@ -19,14 +19,16 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.padbottom = padbottom or 0
    self.overlap = overlap or 0
    self.addgrads=0
+   self.tmpweight=torch.Tensor()
+   self.tmpgradweight=torch.Tensor()
 
    self.alpha= alpha or 1
    self.beta= beta or 0
 
-   self.weight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane)
+   self.weight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane)
    self.bias = torch.Tensor(nOutputPlane)
 
-   self.gradWeight = torch.Tensor(kH, nOutputPlane, kW, nInputPlane):zero()
+   self.gradWeight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane):zero()
    self.gradBias = torch.Tensor(nOutputPlane):zero()
    
    self.memoryWeight = torch.Tensor(nOutputPlane):zero()
@@ -106,9 +108,9 @@ end
 function SpatialConvolution:switchToConv()
    if self.mode=='conv' then return end
    if self.mode=='fc' then 
-      self.weight=self.weight:transpose(1,2):contiguous()
-      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
-      assert(self.weight:size(1)==self.kH) -- just checkin'
+--      self.weight=self.weight:transpose(1,2):contiguous()
+--      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
+--      assert(self.weight:size(1)==self.kH) -- just checkin'
       self.mode='conv'
 --      print('switched layer to convolution mode (kernel size < image size)')
       return
