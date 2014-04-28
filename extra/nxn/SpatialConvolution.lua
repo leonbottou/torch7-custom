@@ -31,11 +31,17 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.gradWeight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane):zero()
    self.gradBias = torch.Tensor(nOutputPlane):zero()
    
-   self.memoryWeight = torch.Tensor(nOutputPlane):zero()
-   self.memoryBias = torch.Tensor(nOutputPlane):zero()
+--   self.memoryWeight = torch.Tensor(nOutputPlane):zero()
+--   self.memoryBias = torch.Tensor(nOutputPlane):zero()
    
-   self.adaRateWeight = torch.Tensor(nOutputPlane):zero()
-   self.adaRatememoryBias = torch.Tensor(nOutputPlane):zero()
+--   self.memoryWeight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane):fill(1e-10)
+--   self.memoryBias = torch.Tensor(nOutputPlane):fill(1e-10)
+   
+--   self.adaRateWeight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane):zero()
+--   self.adaRateBias = torch.Tensor(nOutputPlane):zero()
+   
+   self.adaptiveLR = false
+   self.masterLR=nil
    
    self:reset()
    
@@ -96,9 +102,9 @@ end
 function SpatialConvolution:switchToFC()
    if self.mode=='fc' then return end
    if self.mode=='conv' then 
-      self.weight=self.weight:transpose(1,2):contiguous()
-      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
-      assert(self.weight:size(1)==self.nOutputPlane) -- just checkin'
+--      self.weight=self.weight:transpose(1,2):contiguous()
+--      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
+--      assert(self.weight:size(1)==self.nOutputPlane) -- just checkin'
       self.mode='fc'
 --      print('switched layer to dense mode (kernel size == image size, no padding)')
       return
@@ -332,9 +338,9 @@ end
 
 function SpatialConvolution:accGradParameters(input, gradOutput, scale)
    self:optimize(input)
-   if self.learningRate > 0 then 
+   if self.learningRate > 0 or self.adaptiveLR then 
       if not gradOutput then error('Y U NO gradOutput ???') end
-      local scale = self.learningRate / input:size(1)
+      local scale = 1 / input:size(1)
       self:applyMomentum()
       if self.mode=='trivial' then self:accGradParametersTrivial(input, gradOutput, scale) end
       if self.mode=='fc' then self:accGradParametersFC(input, gradOutput, scale) end
@@ -346,13 +352,21 @@ end
 
 
 function SpatialConvolution:needGradients()
-   return (self.learningRate > 0)
+   return (self.learningRate > 0 or self.adaptiveLR)
 end
 
 function SpatialConvolution:updateParameters()
-   if self.learningRate > 0 then
-      self.weight:add(-1, self.gradWeight)
-      self.bias:add(-1, self.gradBias)
+   if self.learningRate > 0 or self.adaptiveLR then
+      if self.adaptiveLR then
+         self:computeRates()
+         self.weight:addcmul(-1, self.adaRateWeight, self.gradWeight)
+         self.bias:addcmul(-1, self.adaRateBias, self.gradBias)
+         return
+      else
+         self.weight:add(-1*self.learningRate, self.gradWeight)
+         self.bias:add(-1*self.learningRate, self.gradBias)
+         return
+      end
    end
 end
 
@@ -362,8 +376,8 @@ function SpatialConvolution:applyMomentum()
 end
 
 function SpatialConvolution:applyWeightDecay()
-   self.gradWeight:add(self.weightDecay*self.learningRate, self.weight)
-   self.gradBias:add(self.weightDecay*self.learningRate, self.bias)
+   self.gradWeight:add(self.weightDecay, self.weight)
+   self.gradBias:add(self.weightDecay, self.bias)
 end
 
 
@@ -411,6 +425,32 @@ function nxn.SpatialConvolution:__tostring__()
 end
 
 
+function nxn.SpatialConvolution:autoLR(masterLR)
+   self.masterLR=masterLR or 1e-3
+   self.adaptiveLR=true
+end
+
+
+function nxn.SpatialConvolution:computeRates()
+   if not self.adaRateWeight then
+      self.adaRateWeight=self.weight.new(#self.weight):zero()
+   end
+   if not self.adaRateBias then
+      self.adaRateBias=self.bias.new(#self.bias):zero()
+   end
+   if not self.memoryWeight then
+      self.memoryWeight=self.weight.new(#self.weight):fill(1e-10)
+   end
+   if not self.memoryBias then
+      self.memoryBias=self.bias.new(#self.bias):fill(1e-10)
+   end
+   self.adaRateWeight:fill(1)
+   self.adaRateBias:fill(1)
+   self.memoryWeight:addcmul(self.gradWeight, self.gradWeight)
+   self.memoryBias:addcmul(self.gradBias, self.gradBias)
+   self.adaRateWeight:cdiv(self.memoryWeight):sqrt():mul(self.masterLR)
+   self.adaRateBias:cdiv(self.memoryBias):sqrt():mul(self.masterLR)
+end
 
 
 

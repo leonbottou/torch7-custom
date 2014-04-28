@@ -144,7 +144,7 @@ end
 function NeuralNet:showL1Filters()
    local p,g = self.network:parameters()
    local foo=p[1]:float()
-   foo=foo:transpose(3,4):transpose(1,2):transpose(2,3)
+   foo=foo:transpose(3,4):transpose(2,3)
    image.display({image=foo, zoom=3, padding=1}) 
 end
 

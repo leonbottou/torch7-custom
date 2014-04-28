@@ -22,8 +22,7 @@ function Resize:updateOutput(input)
    end
 
    if self.scale==1 then
-      self.output=input
-      return self.output
+      return input
    end
 
    if input:type() ~= 'torch.CudaTensor' then

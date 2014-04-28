@@ -52,10 +52,10 @@ static int nxn_(SpatialConvolution_updateOutput)(lua_State *L)
 
   THTensor *weight = luaT_getfieldcheckudata(L, 1, "tmpweight", torch_Tensor);
   THTensor *tmpweight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
-  printf("transposing");
+  //printf("transposing");
   THTensor_(transpose)(weight,tmpweight, 0, 1);
   weight = THTensor_(newContiguous)(weight);
-  printf("transposing done");
+  //printf("transposing done");
 
 #if 0
   int dimw = 2;
@@ -275,10 +275,10 @@ static int nxn_(SpatialConvolution_updateGradInput)(lua_State *L)
 
   THTensor *weight = luaT_getfieldcheckudata(L, 1, "tmpweight", torch_Tensor);
   THTensor *tmpweight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
-  printf("transposing");
+  //printf("transposing");
   THTensor_(transpose)(weight,tmpweight, 0, 1);
   weight = THTensor_(newContiguous)(weight);
-  printf("transposing done");
+  //printf("transposing done");
 
   THTensor *revk;
   THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
@@ -665,10 +665,10 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "tmpgradweight", torch_Tensor);
   THTensor *tmpgradweight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
-  printf("transposing");
+  //printf("transposing");
   THTensor_(transpose)(gradWeight,tmpgradweight, 0, 1);
   gradWeight = THTensor_(newContiguous)(gradWeight);
-  printf("transposing done");
+  //printf("transposing done");
 
 
   THTensor *gradBias = luaT_getfieldcheckudata(L, 1, "gradBias", torch_Tensor);
@@ -853,10 +853,10 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
       }
    }
 
-  printf("transposing");
+  //printf("transposing");
   THTensor_(transpose)(tmpgradweight,gradWeight, 0, 1);
   tmpgradweight = THTensor_(newContiguous)(tmpgradweight);
-  printf("transposing done");
+  //printf("transposing done");
 
 
   THTensor_(free)(icopy);

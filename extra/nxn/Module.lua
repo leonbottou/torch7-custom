@@ -209,6 +209,15 @@ function Module:setWeightDecay(...)
    end
 end
 
+
+function Module:autoLR(...)
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:autoLR(...) 
+      end
+   end
+end
+
       
 function Module:getByName(name)
    if self.name==name then 
