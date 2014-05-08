@@ -7,6 +7,8 @@ function Dropmap:__init(p)
    self.testmode=false
    self.sameoverbatch=1
    self.inplace=0
+   self.outputSave=self.output
+   self.gradInputSave=self.gradInput
    if (not p) or p<0 or p>1 then
       error('nxn.Dropmap(0<p<1), p = drop probability (p=0 => everything goes through)')
    end
@@ -16,6 +18,8 @@ function Dropmap:updateOutput(input)
    if not self.testmode then
       if self.inplace==1 then
          self.output=input
+      else
+         self.output=self.outputsave
       end
       if self.sameoverbatch==1 then
          self.mask:resize(input:size(input:dim())):bernoulli(1-self.p)
@@ -27,6 +31,7 @@ function Dropmap:updateOutput(input)
       if self.inplace==1 then
          self.output=input
       else
+         self.output=self.outputsave
          self.output:resizeAs(input):copy(input)
       end
       self.output:mul(1-self.p)
@@ -38,6 +43,8 @@ function Dropmap:updateGradInput(input, gradOutput)
    if not self.testmode then
       if self.inplace==1 then
          self.gradInput=gradOutput
+      else
+         self.gradInput=self.gradInputSave
       end
       input.nxn.Dropmap_updateGradInput(self, input, gradOutput)
    else
@@ -47,5 +54,5 @@ function Dropmap:updateGradInput(input, gradOutput)
 end
 
 function Dropmap:getDisposableTensors()
-   return {self.output, self.gradInput, self.mask}
+   return {self.output, self.gradInput, self.gradInputSave, self.outputSave, self.mask}
 end

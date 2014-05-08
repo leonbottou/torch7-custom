@@ -22,7 +22,9 @@ function Resize:updateOutput(input)
    end
 
    if self.scale==1 then
-      return input
+      self.output:resizeAs(input)
+      self.output:copy(input)
+      return self.output
    end
 
    if input:type() ~= 'torch.CudaTensor' then

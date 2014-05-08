@@ -25,6 +25,13 @@ function Sequential:updateOutput(input)
    local currentOutput = input
    for i=1,#self.modules do 
       currentOutput = self.modules[i]:updateOutput(currentOutput)
+      if self.saveMem then
+         if i>1 and not(self.modules[i].inplace==1) then 
+            if not (self.modules[i-1].requiresGradients or self.modules[i-1].doBackProp or self.modules[i].requiresGradients or self.modules[i].doBackProp) then
+               self.modules[i-1]:clean()
+            end
+         end
+      end
    end 
    self.output = currentOutput
    return currentOutput

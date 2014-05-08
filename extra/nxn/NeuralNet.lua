@@ -119,6 +119,10 @@ function NeuralNet:__call__(name)
    return self.network:getByName(name)
 end
 
+function NeuralNet:setSaveMem(bool)
+   return self.network:setSaveMem(bool)
+end
+
 -- you can change these to load another kind of batches...
 
 function NeuralNet:getBatch(batchidx)

@@ -337,8 +337,8 @@ function SpatialConvolution:accGradParametersConv(input, gradOutput, scale)
 end
 
 function SpatialConvolution:accGradParameters(input, gradOutput, scale)
-   self:optimize(input)
    if self.learningRate > 0 or self.adaptiveLR then 
+      self:optimize(input)
       if not gradOutput then error('Y U NO gradOutput ???') end
       local scale = 1 / input:size(1)
       self:applyMomentum()

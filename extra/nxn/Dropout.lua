@@ -15,8 +15,10 @@ function Dropout:updateOutput(input)
    if self.inplace==1 then
       self.output=input
    else
+      self.output=self.outputsave
       self.output:resizeAs(input):copy(input)
    end
+
    if not self.testmode then
       self.mask:resizeAs(input):bernoulli(1-self.p)
       self.output:cmul(self.mask)
@@ -31,6 +33,7 @@ function Dropout:updateGradInput(input, gradOutput)
       if self.inplace==1 then
          self.gradInput=gradOutput
       else
+         self.gradInput=self.gradInputSave
          self.gradInput:resizeAs(gradOutput):copy(gradOutput)
       end
       self.gradInput:cmul(self.mask)
@@ -41,5 +44,5 @@ function Dropout:updateGradInput(input, gradOutput)
 end
 
 function Dropout:getDisposableTensors()
-   return {self.output, self.gradInput, self.mask}
+   return {self.output, self.gradInput, self.outputSave, self.gradInputSave, self.mask}
 end

@@ -6,6 +6,7 @@ function Module:__init()
    self.doBackProp = true
    self.requiresGradients = true
    self.name = ''
+   self.saveMem = false
 end
 
 function Module:parameters()
@@ -189,6 +190,15 @@ function Module:setLearningRate(...)
    if self.modules then
       for _,module in ipairs(self.modules) do
          module:setLearningRate(...) 
+      end
+   end
+end
+
+function Module:setSaveMem(...)
+   self.saveMem=...
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         module:setSaveMem(...) 
       end
    end
 end
