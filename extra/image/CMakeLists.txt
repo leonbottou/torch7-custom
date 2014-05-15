@@ -5,9 +5,23 @@ FIND_PACKAGE(Torch REQUIRED)
 FIND_PACKAGE(JPEG QUIET)
 FIND_PACKAGE(PNG QUIET)
 
+
 SET(src ppm.c)
 ADD_TORCH_PACKAGE(ppm "${src}" "${luasrc}" "Image Processing")
 TARGET_LINK_LIBRARIES(ppm luaT TH)
+
+if (NOT JPEG_FOUND)
+  ADD_SUBDIRECTORY(libjpeg)
+  SET(JPEG_LIBRARIES libjpeg)
+  SET(JPEG_INCLUDE_DIR $(CMAKE_CURRENT_SOURCE_DIR)/libjpeg)
+endif (NOT JPEG_FOUND)
+
+if (NOT PNG_FOUND)
+  ADD_SUBDIRECTORY(libz)
+  ADD_SUBDIRECTORY(libpng)
+  SET(PNG_LIBRARIES libpng)
+  SET(PNG_INCLUDE_DIR $(CMAKE_CURRENT_SOURCE_DIR)/libpng)
+endif (NOT PNG_FOUND)
 
 if (JPEG_FOUND)
     SET(src jpeg.c)
@@ -31,4 +45,5 @@ SET(src image.c)
 SET(luasrc init.lua lena.jpg lena.png lena_full.jpg lena_full.png win.ui)
 
 ADD_TORCH_PACKAGE(image "${src}" "${luasrc}" "Image Processing")
+
 TARGET_LINK_LIBRARIES(image luaT TH)
