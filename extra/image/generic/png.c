@@ -23,6 +23,10 @@ static THTensor * libpng_(read_png_file)(const char *file_name)
   png_infop info_ptr;
   png_bytep * row_pointers;
   size_t fread_ret;
+  int depth = 0;
+  int x,y,k;
+  THTensor *tensor;
+  real *tensor_data;
 
    /* open file and test for it being a png */
   FILE *fp = fopen(file_name, "rb");
@@ -58,7 +62,6 @@ static THTensor * libpng_(read_png_file)(const char *file_name)
   png_read_update_info(png_ptr, info_ptr);
 
   /* get depth */
-  int depth = 0;
   if (color_type == PNG_COLOR_TYPE_RGBA)
     depth = 4;
   else if (color_type == PNG_COLOR_TYPE_RGB)
@@ -94,12 +97,11 @@ static THTensor * libpng_(read_png_file)(const char *file_name)
      abort_("[read_png_file] Error during read_image");
 
   /* alloc tensor */
-  THTensor *tensor = THTensor_(newWithSize3d)(depth, height, width);
-  real *tensor_data = THTensor_(data)(tensor);
+  tensor = THTensor_(newWithSize3d)(depth, height, width);
+  tensor_data = THTensor_(data)(tensor);
 
   /* alloc data in lib format */
   row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * height);
-  int y;
   for (y=0; y<height; y++)
     row_pointers[y] = (png_byte*) malloc(png_get_rowbytes(png_ptr,info_ptr));
 
@@ -107,7 +109,6 @@ static THTensor * libpng_(read_png_file)(const char *file_name)
   png_read_image(png_ptr, row_pointers);
 
   /* convert image to dest tensor */
-  int x,k;
   for (k=0; k<depth; k++) {
     for (y=0; y<height; y++) {
       png_byte* row = row_pointers[y];
@@ -145,6 +146,8 @@ static void libpng_(write_png_file)(const char *file_name, THTensor *tensor)
   png_structp png_ptr;
   png_infop info_ptr;
   png_bytep * row_pointers;
+  int x,y,k;
+  FILE *fp;
 
   /* get dims and contiguous tensor */
   THTensor *tensorc = THTensor_(newContiguous)(tensor);
@@ -169,7 +172,7 @@ static void libpng_(write_png_file)(const char *file_name, THTensor *tensor)
   else if (depth == 1) color_type = PNG_COLOR_TYPE_GRAY;
 
   /* create file */
-  FILE *fp = fopen(file_name, "wb");
+  fp = fopen(file_name, "wb");
   if (!fp)
     abort_("[write_png_file] File %s could not be opened for writing", file_name);
 
@@ -200,18 +203,16 @@ static void libpng_(write_png_file)(const char *file_name, THTensor *tensor)
 
   /* convert tensor to 8bit bytes */
   row_pointers = (png_bytep*) malloc(sizeof(png_bytep) * height);
-  int y;
   for (y=0; y<height; y++)
     row_pointers[y] = (png_byte*) malloc(png_get_rowbytes(png_ptr,info_ptr));
 
   /* convert image to dest tensor */
-  int x,k;
   for (k=0; k<depth; k++) {
     for (y=0; y<height; y++) {
       png_byte* row = row_pointers[y];
       for (x=0; x<width; x++) {
         //row[x*depth+k] = (png_byte)THTensor_(get3d)(tensor, k, y, x);
-        row[x*depth+k] = *tensor_data++;
+        row[x*depth+k] = (png_byte)*tensor_data++;
       }
     }
   }
@@ -246,10 +247,11 @@ static int libpng_(Main_size)(lua_State *L) {
 
   int width, height;
   png_byte color_type;
-
   png_structp png_ptr;
   png_infop info_ptr;
   size_t fread_ret;
+  int depth = 0;
+
   /* open file and test for it being a png */
   FILE *fp = fopen(filename, "rb");
   if (!fp)
@@ -285,7 +287,6 @@ static int libpng_(Main_size)(lua_State *L) {
   png_read_update_info(png_ptr, info_ptr);
 
   /* get depth */
-  int depth = 0;
   if (color_type == PNG_COLOR_TYPE_RGBA)
     depth = 4;
   else if (color_type == PNG_COLOR_TYPE_RGB)

@@ -1,8 +1,9 @@
 
+
 #include <TH.h>
 #include <luaT.h>
-#include <jpeglib.h>
 #include <setjmp.h>
+#include <jpeglib.h>
 
 #define torch_(NAME) TH_CONCAT_3(torch_, Real, NAME)
 #define torch_Tensor TH_CONCAT_STRING_3(torch., Real, Tensor)

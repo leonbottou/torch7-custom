@@ -1,14 +1,14 @@
 # -*- cmake -*-
 
-INCLUDE_DIRECTORIES(../zlib ${CMAKE_CURRENT_BINARY_DIR}/../zlib)
+INCLUDE_DIRECTORIES(../libz ${CMAKE_CURRENT_BINARY_DIR}/../libz)
 
 SET (src png.c pngerror.c pngget.c pngmem.c pngpread.c pngread.c
          pngrio.c pngrtran.c pngrutil.c pngset.c pngtrans.c pngwio.c
          pngwrite.c pngwtran.c pngwutil.c)
 
-IF(MSVC)
-  SET(src ${src} scripts/symbols.def)
-ENDIF(MSVC)
+#IF(MSVC)
+#  SET(src ${src} scripts/symbols.def)
+#ENDIF(MSVC)
 
 ADD_LIBRARY(libpng SHARED ${src})
 TARGET_LINK_LIBRARIES(libpng zlib)

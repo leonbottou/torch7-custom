@@ -276,7 +276,7 @@ static int libjpeg_(Main_load)(lua_State *L)
     
     for(k = 0; k < cinfo.output_components; k++)
     {
-      for(i = 0; i < cinfo.output_width; i++)
+      for(i = 0; i < (int)cinfo.output_width; i++)
         THTensor_(set3d)(tensor, k, cinfo.output_scanline-1, i, 
                          (real)buffer[0][cinfo.output_components*i+k]);
     }
@@ -324,13 +324,17 @@ int libjpeg_(Main_save)(lua_State *L) {
   /* jpeg struct */
   struct jpeg_compress_struct cinfo;
   struct jpeg_error_mgr jerr;
+  JSAMPROW row_pointer[1];
+  FILE *outfile;
 
   /* pointer to raw image */
   unsigned char *raw_image = NULL;
+  int x,y,k;
 
   /* dimensions of the image we want to write */
   int width=0, height=0, bytes_per_pixel=0;
   int color_space=0;
+
   if (tensorc->nDimension == 3) {
     bytes_per_pixel = tensorc->size[0];
     height = tensorc->size[1];
@@ -355,19 +359,16 @@ int libjpeg_(Main_save)(lua_State *L) {
   raw_image = (unsigned char *)malloc((sizeof (unsigned char))*width*height*bytes_per_pixel);
 
   /* convert tensor to raw bytes */
-  int x,y,k;
   for (k=0; k<bytes_per_pixel; k++) {
     for (y=0; y<height; y++) {
       for (x=0; x<width; x++) {
-        raw_image[(y*width+x)*bytes_per_pixel+k] = *tensor_data++;
+        raw_image[(y*width+x)*bytes_per_pixel+k] = (unsigned char)*tensor_data++;
       }
     }
   }
 
   /* this is a pointer to one row of image data */
-  JSAMPROW row_pointer[1];
-  FILE *outfile = fopen( filename, "wb" );
-
+  outfile = fopen( filename, "wb" );
   if ( !outfile ) {
     printf("Error opening output jpeg file %s\n!", filename );
     return -1;
