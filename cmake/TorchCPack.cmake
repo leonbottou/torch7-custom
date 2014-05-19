@@ -3,14 +3,17 @@ SET(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Torch7 machine-learning platform.
  Torch7 provides a Matlab-like environment for state-of-the-art
  machine-learning algorithms. It is easy to use and provides a very
  efficient implementation, thanks to an easy and fast scripting language
- (Lua) and a underlying C implementation.")
+ (Lua) and a underlying C implementation.  
+ 
+ Torch7-custom-lb was highly customized to run smoothly on Windows
+ with a single installer and high performance convolutions.")
 
-SET(CPACK_PACKAGE_NAME "torch7")
+SET(CPACK_PACKAGE_NAME "Torch7-custom-lb")
 SET(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYRIGHT.txt")
 SET(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
-SET(CPACK_PACKAGE_VERSION_MAJOR 1)
+SET(CPACK_PACKAGE_VERSION_MAJOR 7)
 SET(CPACK_PACKAGE_VERSION_MINOR 1)
-SET(CPACK_PACKAGE_VERSION_PATCH 0)
+SET(CPACK_PACKAGE_VERSION_PATCH 1)
 SET(CPACK_CREATE_DESKTOP_LINKS wintorch)
 SET(CPACK_PACKAGE_EXECUTABLES "wintorch" "WinTorch")
 SET(CPACK_NSIS_MENU_LINKS "http://www.torch.ch" "Torch Help")
