@@ -582,15 +582,15 @@ for _,Tensor in ipairs({"ByteTensor", "CharTensor",
          [[
 static int THRandom_random2__(long a, long b)
 {
-  THArgCheck(b >= a, 2, "upper bound must be larger than lower bound");
   THRandomTLS *rstate = THRandom_getTLS();
+  THArgCheck(b >= a, 2, "upper bound must be larger than lower bound");
   return((THRandom_randomWithState(rstate) % (b+1-a)) + a);
 }
          
 static int THRandom_random1__(long b)
 {
-  THArgCheck(b > 0, 1, "upper bound must be strictly positive");
   THRandomTLS *rstate = THRandom_getTLS();
+  THArgCheck(b > 0, 1, "upper bound must be strictly positive");
   return(THRandom_randomWithState(rstate) % b + 1);
 }
          ]])
@@ -600,15 +600,15 @@ static int THRandom_random1__(long b)
                       [[
 static void THTensor_random2__(THTensor *self, long a, long b)
 {
-  THArgCheck(b >= a, 2, "upper bound must be larger than lower bound");
   THRandomTLS *rstate = THRandom_getTLS();
+  THArgCheck(b >= a, 2, "upper bound must be larger than lower bound");
   TH_TENSOR_APPLY(real, self, *self_data = ((THRandom_randomWithState(rstate) % (b+1-a)) + a);)
 }
 
 static void THTensor_random1__(THTensor *self, long b)
 {
-  THArgCheck(b > 0, 1, "upper bound must be strictly positive");
   THRandomTLS *rstate = THRandom_getTLS();
+  THArgCheck(b > 0, 1, "upper bound must be strictly positive");
   TH_TENSOR_APPLY(real, self, *self_data = (THRandom_randomWithState(rstate) % b + 1);)
 }
 ]], 'Tensor', Tensor):gsub('real', real))
