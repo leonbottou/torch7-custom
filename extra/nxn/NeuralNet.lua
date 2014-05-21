@@ -216,7 +216,7 @@ function NeuralNet:test()
    local numexamples=0
    -- run on validation set :
    for valbatchidx=self.testset[1],self.testset[2] do
-    crit_out, batch_numexamples, _, _ = self.testBatch(valbatchidx)
+    crit_out, batch_numexamples, _, _ = self:testBatch(valbatchidx)
     meancost = meancost + crit_out
     numexamples = numexamples + batch_numexamples
    end
