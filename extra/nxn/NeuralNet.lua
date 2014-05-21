@@ -190,29 +190,36 @@ function NeuralNet:resume()
    self:train(self.lasttraincall[1],self.lasttraincall[2],self.lasttraincall[3])
 end
 
+function NeuralNet:testBatch(valbatchidx, mod)
+  local valbatch, valtarget=self:getTestBatch(valbatchidx)
+  mod = mod or self.network
+
+  self:setTestMode(true)
+
+  self.network:forward(valbatch)
+  self.criterion:forward(self.network.output, valtarget)
+  if self.confusion then
+     if self.network.output:dim()==2 then
+        for k=1,valbatch:size(1) do
+           self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+        end
+     end
+  end
+
+  self:setTestMode(false)
+  return self.criterion.output, valbatch:size(1), valtarget, mod.output
+end
 
 function NeuralNet:test()
    local params, gradients =self.network:parameters()
    local meancost=0
    local numexamples=0
    -- run on validation set :
-   self:setTestMode(true)
    for valbatchidx=self.testset[1],self.testset[2] do
-      local valbatch,valtarget=self:getTestBatch(valbatchidx)  
-      
-      self.network:forward(valbatch)
-      self.criterion:forward(self.network.output, valtarget)
-      meancost=meancost+self.criterion.output
-      numexamples=numexamples+valbatch:size(1)
-      if self.confusion then
-         if self.network.output:dim()==2 then
-            for k=1,valbatch:size(1) do
-               self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
-            end
-         end
-      end
+    crit_out, batch_numexamples, _, _ = self.testBatch(valbatchidx)
+    meancost = meancost + crit_out
+    numexamples = numexamples + batch_numexamples
    end
-   self:setTestMode(false)
    meancost=meancost/numexamples
    if self.confusion then 
       self.confusion:updateValids() 
