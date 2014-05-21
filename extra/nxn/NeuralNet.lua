@@ -23,6 +23,7 @@ function NeuralNet:__init()
       
       self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
       self.checkpointname = nil       -- should be a 'filename'
+      self.vizdir = nil               -- should be a '/path/to/vizs'
       
       self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
       
@@ -98,6 +99,10 @@ function NeuralNet:saveNet()
    torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
 end
 
+function NeuralNet:setVisualizationDir(vizdir)
+   self.vizdir=vizdir
+end
+
 function NeuralNet:setEpochShuffle(epochshuffle)
    self.epochshuffle=epochshuffle
 end
@@ -148,7 +153,12 @@ function NeuralNet:showL1Filters()
    local p,g = self.network:parameters()
    local foo=p[1]:float()
    foo=foo:transpose(3,4):transpose(2,3)
-   image.display({image=foo, zoom=3, padding=1}) 
+   if self.vizdir then
+      img = image.toDisplayTensor({input=foo, padding=1, zoom=3})
+      image.savePNG(paths.concat(self.vizdir, 'l1filters.png'), img)
+   else
+      image.display({image=foo, zoom=3, padding=1}) 
+   end
 end
 
 
@@ -171,6 +181,10 @@ function NeuralNet:plotError()
       testcostindices[{i}]=self.testcostvalues[i][1]
    end
    
+   if self.vizdir then
+      local fignum = gnuplot.pngfigure(paths.concat(self.vizdir, 'error.png'))
+   end
+   
    if ntestpoints>0 then
    gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
    {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
@@ -178,6 +192,10 @@ function NeuralNet:plotError()
    else
       gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
       {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'})
+   end
+   
+   if self.vizdir then
+      gnuplot.close(fignum);
    end
 end
 
