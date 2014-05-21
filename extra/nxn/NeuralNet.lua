@@ -17,7 +17,6 @@ function NeuralNet:__init()
       self.criterion = nil            -- should be nxn.Criterion
       
       self.meanoverset = nil          -- should be a torch.Tensor() of the same type as the network input
-      self.datasetdir = nil           -- should be a '/path/to/dataset'
       self.trainset = nil             -- should be a {first, last}
       self.trainsetsize = nil         -- should be last - first + 1
       self.testset = nil              -- should be a {first, last}
@@ -291,10 +290,6 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    
    if not self.criterion then
       error('no criterion : use NeuralNet:setCriterion(criterion)') 
-   end
-   
-   if not self.datasetdir then
-      print('no dataset folder : use NeuralNet:setDatasetdir("/path/to/dataset"), or write your own NeuralNet:getBatch(idx) function') 
    end
    
    if not self.trainset then
