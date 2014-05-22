@@ -38,7 +38,6 @@ function NeuralNet:__init()
       self.testcostvalues = {}         -- we want to store the values of the cost during test passes
       
       self.lasttraincall = {}
-      self.gpumode = false
 end
 
 local function zapTensor(a)
@@ -333,10 +332,6 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       print('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
   
-   if not self.gpumode then
-      print('running on CPU : use NeuralNet:gpu() ')
-   end
-   
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
