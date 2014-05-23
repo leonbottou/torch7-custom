@@ -54,6 +54,12 @@ end
 function SpatialConvolution:setLearningRate(lr)
    if lr > 0 or lr==0 then
       self.learningRate=lr
+      self.adaptiveLR = false
+      self.memoryWeight = nil
+      self.memoryBias = nil
+      self.adaRateWeight = nil
+      self.adaRateBias = nil
+      collectgarbage()
    else
       error('learning rate must be positive or 0')   
    end
