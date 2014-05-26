@@ -253,5 +253,15 @@ function Module:setName(name)
    self.name=name
 end
 
+function Module:isGPUCompatible(...)
+   local gpucompatible = self.gpucompatible
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         gpucompatible = gpucompatible and module:isGPUCompatible()
+      end
+   end
+   return gpucompatible
+end
+
 
 
