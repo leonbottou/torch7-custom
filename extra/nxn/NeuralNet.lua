@@ -182,7 +182,16 @@ function NeuralNet:showL1Filters()
    end
 end
 
-
+function NeuralNet:updateConfusion(target)
+   if self.confusion then
+      if target:size(1) ~= self.network.output:size(1) then error('network output and target sizes are inconsistent') end
+      if self.network.output:dim()==2 then
+         for k=1,target:size(1) do
+            self.confusion:add(self.network.output[{k,{}}], target[{k}])
+         end
+      end
+   end
+end
 
 
 function NeuralNet:plotError()
@@ -237,13 +246,8 @@ function NeuralNet:testBatch(valbatchidx, mod)
 
   self.network:forward(valbatch)
   self.criterion:forward(self.network.output, valtarget)
-  if self.confusion then
-     if self.network.output:dim()==2 then
-        for k=1,valbatch:size(1) do
-           self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
-        end
-     end
-  end
+  
+  if self.confusion then self:updateConfusion(valtarget)  end
 
   self:setTestMode(false)
   return self.criterion.output, valbatch:size(1), valtarget, mod.output
@@ -260,15 +264,17 @@ function NeuralNet:test()
     numexamples = numexamples + batch_numexamples
    end
    meancost=meancost/numexamples
+
+   local avgvalid = -1
    if self.confusion then 
       self.confusion:updateValids() 
-      print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
-      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
+      avgvalid = self.confusion.averageValid*100
       self.confusion:zero()
+      print('mean cost on validation set : '..meancost.. ', average valid % : '..avgvalid)
    else
       print('mean cost on validation set : '..meancost)
-      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, -1})
    end
+   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, avgvalid})
    
 end
 
@@ -294,15 +300,11 @@ function NeuralNet:forwardprop(input, target, timer, batchidx)
    
    -- confusion : only interesting for classification
    if self.confusion then 
-      if self.network.output:dim()==2 then
-         for k=1,input:size(1) do
-            self.confusion:add(self.network.output[{k,{}}], target[{k}])
-         end
-         self.confusion:updateValids()
-      end
+      self:updateConfusion(target)
+      self.confusion:updateValids()
    print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
       table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), self.confusion.averageValid*100})
-   self.confusion:zero()
+      self.confusion:zero()
    else
    print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', time : '..time:time().real)   
       table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), -1})
