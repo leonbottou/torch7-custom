@@ -17,13 +17,13 @@ function NeuralNet:__init()
       self.criterion = nil            -- should be nxn.Criterion
       
       self.meanoverset = nil          -- should be a torch.Tensor() of the same type as the network input
-      self.datasetdir = nil           -- should be a '/path/to/dataset'
       self.trainset = nil             -- should be a {first, last}
       self.trainsetsize = nil         -- should be last - first + 1
       self.testset = nil              -- should be a {first, last}
       
       self.checkpointdir = nil        -- should be a '/path/to/checkpoint'
       self.checkpointname = nil       -- should be a 'filename'
+      self.vizdir = nil               -- should be a '/path/to/vizs'
       
       self.batchshuffle = nil         -- save the torch.randperm (shuffling order of the batches)
       
@@ -38,7 +38,6 @@ function NeuralNet:__init()
       self.testcostvalues = {}         -- we want to store the values of the cost during test passes
       
       self.lasttraincall = {}
-      self.gpumode = false
 end
 
 local function zapTensor(a)
@@ -99,6 +98,10 @@ function NeuralNet:saveNet()
    torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
 end
 
+function NeuralNet:setVisualizationDir(vizdir)
+   self.vizdir=vizdir
+end
+
 function NeuralNet:setEpochShuffle(epochshuffle)
    self.epochshuffle=epochshuffle
 end
@@ -149,7 +152,12 @@ function NeuralNet:showL1Filters()
    local p,g = self.network:parameters()
    local foo=p[1]:float()
    foo=foo:transpose(3,4):transpose(2,3)
-   image.display({image=foo, zoom=3, padding=1}) 
+   if self.vizdir then
+      img = image.toDisplayTensor({input=foo, padding=1, zoom=3})
+      image.savePNG(paths.concat(self.vizdir, 'l1filters.png'), img)
+   else
+      image.display({image=foo, zoom=3, padding=1}) 
+   end
 end
 
 
@@ -172,6 +180,10 @@ function NeuralNet:plotError()
       testcostindices[{i}]=self.testcostvalues[i][1]
    end
    
+   if self.vizdir then
+      local fignum = gnuplot.pngfigure(paths.concat(self.vizdir, 'error.png'))
+   end
+   
    if ntestpoints>0 then
    gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
    {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
@@ -179,6 +191,10 @@ function NeuralNet:plotError()
    else
       gnuplot.plot({torch.range(1,npoints)/self.trainsetsize, costvector, '-'},
       {'Train set cost', torch.range(1,npoints)/self.trainsetsize, costvector, '-'})
+   end
+   
+   if self.vizdir then
+      gnuplot.close(fignum);
    end
 end
 
@@ -191,29 +207,36 @@ function NeuralNet:resume()
    self:train(self.lasttraincall[1],self.lasttraincall[2],self.lasttraincall[3])
 end
 
+function NeuralNet:testBatch(valbatchidx, mod)
+  local valbatch, valtarget=self:getTestBatch(valbatchidx)
+  mod = mod or self.network
+
+  self:setTestMode(true)
+
+  self.network:forward(valbatch)
+  self.criterion:forward(self.network.output, valtarget)
+  if self.confusion then
+     if self.network.output:dim()==2 then
+        for k=1,valbatch:size(1) do
+           self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
+        end
+     end
+  end
+
+  self:setTestMode(false)
+  return self.criterion.output, valbatch:size(1), valtarget, mod.output
+end
 
 function NeuralNet:test()
    local params, gradients =self.network:parameters()
    local meancost=0
    local numexamples=0
    -- run on validation set :
-   self:setTestMode(true)
    for valbatchidx=self.testset[1],self.testset[2] do
-      local valbatch,valtarget=self:getTestBatch(valbatchidx)  
-      
-      self.network:forward(valbatch)
-      self.criterion:forward(self.network.output, valtarget)
-      meancost=meancost+self.criterion.output
-      numexamples=numexamples+valbatch:size(1)
-      if self.confusion then
-         if self.network.output:dim()==2 then
-            for k=1,valbatch:size(1) do
-               self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
-            end
-         end
-      end
+    crit_out, batch_numexamples, _, _ = self:testBatch(valbatchidx)
+    meancost = meancost + crit_out
+    numexamples = numexamples + batch_numexamples
    end
-   self:setTestMode(false)
    meancost=meancost/numexamples
    if self.confusion then 
       self.confusion:updateValids() 
@@ -293,10 +316,6 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       error('no criterion : use NeuralNet:setCriterion(criterion)') 
    end
    
-   if not self.datasetdir then
-      print('no dataset folder : use NeuralNet:setDatasetdir("/path/to/dataset"), or write your own NeuralNet:getBatch(idx) function') 
-   end
-   
    if not self.trainset then
       error('no training set range : use NeuralNet:setTrainsetRange(first, last)') 
    end
@@ -313,10 +332,6 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       print('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
   
-   if not self.gpumode then
-      print('running on CPU : use NeuralNet:gpu() ')
-   end
-   
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
