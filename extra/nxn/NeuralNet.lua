@@ -38,6 +38,7 @@ function NeuralNet:__init()
       self.testcostvalues = {}         -- we want to store the values of the cost during test passes
       
       self.lasttraincall = {}
+      self.gpumode=false
 end
 
 local function zapTensor(a)
@@ -48,9 +49,24 @@ local function zapTensor(a)
 end
 
 function NeuralNet:setNetwork(net)
-   self.network=net
+   self.rawnetwork=net
+   self:GPUWrap()
 end
 
+function NeuralNet:GPUWrap()
+   if cutorch and self.rawnetwork:isGPUCompatible() then
+      self.rawnetwork:cuda()
+      self.network=nxn.Sequential()
+      self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
+      self.network:add(self.rawnetwork)
+      self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
+      self.gpumode=true
+   else
+      self.network=self.rawnetwork
+      self.gpumode=false
+   end
+   return self.network
+end
 
 function NeuralNet:cleanNetwork()
    self.network:clean()
@@ -95,7 +111,13 @@ end
 
 function NeuralNet:saveNet()
    self:cleanNetwork()
-   torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+   if self.gpumode then 
+      self.rawnetwork:float()
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+      self.rawnetwork:cuda()
+   else
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+   end   
 end
 
 function NeuralNet:setVisualizationDir(vizdir)
@@ -303,6 +325,7 @@ end
 
 function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    self.lasttraincall={nepochs, savefrequency, measurementsfrequency}
+   self:GPUWrap()
    -- do a lot of tests and return errors if necessary :
    if not nepochs then
       error('NeuralNet:train(n [, fsave, fmeas]), will train until epoch n is reached (starts at 0), save every fsave batches, take measurements every fmeas batches (you can set these to nil)') 
