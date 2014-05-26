@@ -432,11 +432,12 @@ function nxn.SpatialConvolution:__tostring__()
 end
 
 
-function nxn.SpatialConvolution:autoLR(masterLR)
-   self.masterLR=masterLR or 1e-3
+
+function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
+   self.masterLR=masterLR or 1e-3 -- upper bound
+   self.sensitivity = sensitivity or 1
    self.adaptiveLR=true
 end
-
 
 function nxn.SpatialConvolution:computeRates()
    if not self.adaRateWeight then
@@ -453,14 +454,22 @@ function nxn.SpatialConvolution:computeRates()
    end
    self.adaRateWeight:fill(1)
    self.adaRateBias:fill(1)
-   self.memoryWeight:addcmul(self.gradWeight, self.gradWeight)
-   self.memoryBias:addcmul(self.gradBias, self.gradBias)
+   self.memoryWeight:addcmul(self.sensitivity, self.gradWeight, self.gradWeight)
+   self.memoryBias:addcmul(self.sensitivity, self.gradBias, self.gradBias)
    self.adaRateWeight:cdiv(self.memoryWeight):sqrt():mul(self.masterLR)
    self.adaRateBias:cdiv(self.memoryBias):sqrt():mul(self.masterLR)
 end
 
 
 
+function SpatialConvolution:getDisposableTensors()
+   local t
+   table.insert(t, self.output)
+   table.insert(t, self.gradInput)
+   table.insert(t, self.adaRateWeight)
+   table.insert(t, self.adaRateBias)
+   return t
+end
 
 -- clip the weights (this is for later)
 
