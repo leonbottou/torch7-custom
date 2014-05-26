@@ -447,10 +447,10 @@ function nxn.SpatialConvolution:computeRates()
       self.adaRateBias=self.bias.new(#self.bias):zero()
    end
    if not self.memoryWeight then
-      self.memoryWeight=self.weight.new(#self.weight):fill(1e-10)
+      self.memoryWeight=self.weight.new(#self.weight):fill(1e-10) -- should be 1
    end
    if not self.memoryBias then
-      self.memoryBias=self.bias.new(#self.bias):fill(1e-10)
+      self.memoryBias=self.bias.new(#self.bias):fill(1e-10) -- should be 1
    end
    self.adaRateWeight:fill(1)
    self.adaRateBias:fill(1)
