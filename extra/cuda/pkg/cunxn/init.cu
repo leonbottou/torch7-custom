@@ -14,7 +14,6 @@
 #include "SpatialConvolution.cu"
 #include "SpatialMaxPooling.cu"
 #include "SpatialGlobalMaxPooling.cu"
-#include "ConvProto.cu"
 #include "Dropmap.cu"
 #include "LogSoftMax.cu"
 #include "Resize.cu"
@@ -34,7 +33,6 @@ int luaopen_libcunxn(lua_State *L)
   cunxn_SpatialMaxPooling_init(L);
   cunxn_SpatialGlobalMaxPooling_init(L);
   cunxn_testSgemm_init(L);
-  cunxn_ConvProto_init(L);
   cunxn_Dropmap_init(L);
   cunxn_LogSoftMax_init(L);
   cunxn_Resize_init(L);
