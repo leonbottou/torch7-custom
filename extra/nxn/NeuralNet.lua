@@ -196,23 +196,56 @@ function NeuralNet:updateConfusion(target)
 end
 
 
+--   table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), avgvalid})
+function NeuralNet:insertTrainCost(batchidx, cost, avgvalid)
+   if not self.trainCostTensor then
+      self.trainCostTensor=torch.Tensor(1000, 4)
+      self.trainCostTensorCount=0
+   end
+   if self.trainCostTensorCount >= self.trainCostTensor:size(1) then
+      self.trainCostTensor = self.growTensor(self.trainCostTensor, 1, 1000)
+   end
+   self.trainCostTensorCount=self.trainCostTensorCount+1
+   trainCostTensor[{self.trainCostTensorCount, 1}]=self:getNumBatchesSeen()-1
+   trainCostTensor[{self.trainCostTensorCount, 2}]=batchidx
+   trainCostTensor[{self.trainCostTensorCount, 3}]=cost
+   trainCostTensor[{self.trainCostTensorCount, 4}]=avgvalid
+end
+
+--   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, avgvalid})
+
+function NeuralNet:insertTestCost(meancost, avgvalid)
+   if not self.testCostTensor then
+      self.testCostTensor=torch.Tensor(200, 3)
+      self.testCostTensorCount=0
+   end
+   if self.testCostTensorCount >= self.testCostTensor:size(1) then
+      self.testCostTensor = self.growTensor(self.testCostTensor, 1, 200)
+   end
+   self.testCostTensorCount=self.testCostTensorCount+1   
+   testCostTensor[{self.testCostTensorCount, 1}] = self:getNumBatchesSeen()
+   testCostTensor[{self.testCostTensorCount, 2}] = meancost
+   testCostTensor[{self.testCostTensorCount, 3}] = avgvalid
+end
+
+function NeuralNet.growTensor(tensor, dim, value)
+   local newtensorsize = #tensor
+   newtensorsize[dim]=newtensorsize[dim]+value
+   local newtensor = tensor.new(newtensorsize)
+   newtensor:narrow(dim, 1, tensor:size(dim)):copy(tensor)
+   zapTensor(tensor)
+   return newtensor
+end
+
 function NeuralNet:plotError()
    require 'gnuplot'
-   local npoints=#self.costvalues
-   local costvector=torch.Tensor(npoints)
-   for i=1,npoints do
-      costvector[{i}]=self.costvalues[i][3]
-   end
+   local npoints=self.trainCostTensorCount
+   local costvector=self.trainCostTensor:narrow(1, 1, npoints):select(2,3):contiguous()
    
-   local ntestpoints=#self.testcostvalues
-   local testcostvector=torch.Tensor(ntestpoints)
-   local testcostindices=torch.Tensor(ntestpoints)
-   
-   for i=1,ntestpoints do
-      testcostvector[{i}]=self.testcostvalues[i][2]
-      testcostindices[{i}]=self.testcostvalues[i][1]
-   end
-   
+   local ntestpoints = self.testCostTensorCount
+   local testcostvector = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,2):contiguous()
+   local testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous():div(self.trainsetsize)
+
    if self.vizdir then
       local fignum = gnuplot.pngfigure(paths.concat(self.vizdir, 'error.png'))
    end
@@ -230,6 +263,7 @@ function NeuralNet:plotError()
       gnuplot.close(fignum);
    end
 end
+
 
 function NeuralNet:setTestMode(value)
    self.network:setTestMode(value)
@@ -274,7 +308,8 @@ function NeuralNet:test()
    else
       print('mean cost on validation set : '..meancost)
    end
-   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, avgvalid})
+
+   self:insertTestCost(meancost, avgvalid)
    
 end
 
@@ -330,7 +365,7 @@ function NeuralNet:forwardprop(input, target, timer, batchidx)
    end   
 
    -- storing costs happens here
-   table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), avgvalid})
+   self:insertTrainCost(batchidx, self.criterion.output/input:size(1), avgvalid)
 end
 
 
