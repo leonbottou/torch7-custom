@@ -49,6 +49,7 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.learningRate=0
    self.momentum=0
    self.weightDecay=0
+   self.gpucompatible = true
 end
 
 function SpatialConvolution:setLearningRate(lr)

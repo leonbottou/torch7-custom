@@ -4,6 +4,7 @@ function SpatialGlobalMaxPooling:__init()
    parent.__init(self)
 
    self.indices=torch.Tensor()
+   self.gpucompatible = true
 end
 
 

@@ -7,6 +7,7 @@ function Module:__init()
    self.requiresGradients = true
    self.name = ''
    self.saveMem = false
+   self.gpucompatible = false
 end
 
 function Module:parameters()

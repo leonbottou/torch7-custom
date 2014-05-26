@@ -12,6 +12,7 @@ function Column:__init(splits)
    self.output = torch.Tensor()
    self.gradInput = torch.Tensor()
 
+   self.gpucompatible = true
 end
 
 function Column:add(module)
