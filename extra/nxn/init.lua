@@ -25,9 +25,12 @@ include('LogSoftMax.lua')
 
 include('Jitter.lua')
 include('Resize.lua')
+include('ExtractInterpolate.lua')
 
 include('NeuralNet.lua')
 include('Dataset.lua')
+
+
 
 if false then 
 

@@ -18,6 +18,7 @@
 #include "Dropmap.cu"
 #include "LogSoftMax.cu"
 #include "Resize.cu"
+#include "ExtractInterpolate.cu"
 
 
 LUA_EXTERNC DLL_EXPORT int luaopen_libcunxn(lua_State *L);
@@ -37,6 +38,7 @@ int luaopen_libcunxn(lua_State *L)
   cunxn_Dropmap_init(L);
   cunxn_LogSoftMax_init(L);
   cunxn_Resize_init(L);
+  cunxn_ExtractInterpolate_init(L);
 
   return 1;
 }
