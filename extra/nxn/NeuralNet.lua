@@ -184,7 +184,9 @@ end
 
 function NeuralNet:updateConfusion(target)
    if self.confusion then
-      if target:size(1) ~= self.network.output:size(1) then error('network output and target sizes are inconsistent') end
+      if target:size(1) ~= self.network.output:size(1) then 
+         error('network output and target sizes are inconsistent') 
+      end
       if self.network.output:dim()==2 then
          for k=1,target:size(1) do
             self.confusion:add(self.network.output[{k,{}}], target[{k}])
@@ -242,14 +244,12 @@ function NeuralNet:testBatch(valbatchidx, mod)
   local valbatch, valtarget=self:getTestBatch(valbatchidx)
   mod = mod or self.network
 
-  self:setTestMode(true)
-
-  self.network:forward(valbatch)
-  self.criterion:forward(self.network.output, valtarget)
+  self:forwardTest(valbatch, valtarget)
   
-  if self.confusion then self:updateConfusion(valtarget)  end
+  if self.confusion then 
+     self:updateConfusion(valtarget)  
+  end
 
-  self:setTestMode(false)
   return self.criterion.output, valbatch:size(1), valtarget, mod.output
 end
 
@@ -294,9 +294,27 @@ function NeuralNet:measure()
 end
 
 
-function NeuralNet:forwardprop(input, target, timer, batchidx)
+function NeuralNet:forward(input, target)
+   self:GPUWrap()
    self.network:forward(input)
-   self.criterion:forward(self.network.output, target)
+   if target then 
+      self.criterion:forward(self.network.output, target)
+      return self.network.output, self.criterion.output
+   end
+   return self.network.output
+end
+
+function NeuralNet:forwardTest(input, target)
+   self:setTestMode(true)
+   local output, cost = self:forward(input)
+   self:setTestMode(false)
+   return output, cost
+end
+
+
+function NeuralNet:forwardprop(input, target, timer, batchidx)
+   -- forward prop through the network
+   self:forward(input, target)
    
    -- confusion : only interesting for classification
    local avgvalid = -1
@@ -304,11 +322,14 @@ function NeuralNet:forwardprop(input, target, timer, batchidx)
       self:updateConfusion(target)
       self.confusion:updateValids()
       avgvalid = self.confusion.averageValid*100
+   -- display happens here
       print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
       self.confusion:zero()
    else
       print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', time : '..time:time().real)   
    end   
+
+   -- storing costs happens here
    table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), avgvalid})
 end
 
@@ -328,7 +349,6 @@ end
 
 function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    self.lasttraincall={nepochs, savefrequency, measurementsfrequency}
-   self:GPUWrap()
    -- do a lot of tests and return errors if necessary :
    if not nepochs then
       error('NeuralNet:train(n [, fsave, fmeas]), will train until epoch n is reached (starts at 0), save every fsave batches, take measurements every fmeas batches (you can set these to nil)') 
