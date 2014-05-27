@@ -439,11 +439,12 @@ function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
    self.adaptiveLR=true
 end
 
-function nxn.SpatialConvolution:computeRates()
-   if not self.adaRateWeight then
+function SpatialConvolution:computeRates()
+   -- or : second boolean is not checked if first is true (it would crash at :dim() call otherwise)
+   if (not self.adaRateWeight) or self.adaRateWeight:dim()==0 then -- init
       self.adaRateWeight=self.weight.new(#self.weight):zero()
    end
-   if not self.adaRateBias then
+   if (not self.adaRateBias) or self.adaRateBias:dim()==0 then -- init
       self.adaRateBias=self.bias.new(#self.bias):zero()
    end
    if not self.memoryWeight then
