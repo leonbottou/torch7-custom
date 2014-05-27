@@ -429,6 +429,8 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       print('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
   
+   print("don't forget to do NeuralNet:setSaveMem(true) if you are not interested in getting the intermediate data")
+  
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do

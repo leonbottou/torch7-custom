@@ -46,7 +46,9 @@ function ExtractInterpolate:updateOutputCall(input, targety, targetx, y1, x1, y2
    return 
 end
 
-
+function ExtractInterpolate:getDisposableTensors()
+   return {self.output, self.gradInput, self.tmp}
+end
 
 
 

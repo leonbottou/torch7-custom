@@ -469,6 +469,8 @@ function SpatialConvolution:getDisposableTensors()
    table.insert(t, self.gradInput)
    table.insert(t, self.adaRateWeight)
    table.insert(t, self.adaRateBias)
+   table.insert(t, self.tmpweight)
+   table.insert(t, self.tmpgradweight)
    return t
 end
 
