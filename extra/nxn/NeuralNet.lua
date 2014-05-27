@@ -254,10 +254,12 @@ function NeuralNet:plotError()
    local costvector=self.trainCostTensor:narrow(1, 1, npoints):select(2,3):contiguous()
    
    local ntestpoints = self.testCostTensorCount or 0
+   local testcostvector, testcostindices
    if self.testCostTensor then
-      local testcostvector = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,2):contiguous()
-      local testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous():div(self.trainsetsize)
+      testcostvector = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,2):contiguous()
+      testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous():div(self.trainsetsize)
    end
+
 
    if self.vizdir then
       local fignum = gnuplot.pngfigure(paths.concat(self.vizdir, 'error.png'))
