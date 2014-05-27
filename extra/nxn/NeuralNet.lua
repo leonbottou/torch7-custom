@@ -257,7 +257,7 @@ function NeuralNet:plotError()
    local testcostvector, testcostindices
    if self.testCostTensor then
       testcostvector = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,2):contiguous()
-      testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous():div(self.trainsetsize)
+      testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous()
    end
 
 

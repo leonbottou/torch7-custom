@@ -439,7 +439,7 @@ function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
    self.adaptiveLR=true
 end
 
-function SpatialConvolution:computeRates()
+function nxn.SpatialConvolution:computeRates()
    -- or : second boolean is not checked if first is true (it would crash at :dim() call otherwise)
    if (not self.adaRateWeight) or self.adaRateWeight:dim()==0 then -- init
       self.adaRateWeight=self.weight.new(#self.weight):zero()
