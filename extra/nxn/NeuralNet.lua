@@ -445,30 +445,38 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       local input, target = self:getBatch(batchidx)
       
       -- forward 
-      local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
-      if not successf then 
-         if errormsgf=='stop' then
-            print('stopped during forward prop')
-            return
-         else
-            error(errormsgf..' during forward prop') 
+      if debugmode then 
+         self:forwardprop(input, target, time, batchidx)
+      else
+         local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
+         if not successf then 
+            if errormsgf=='stop' then
+               print('stopped during forward prop')
+               return
+            else
+               error(errormsgf..' during forward prop') 
+            end
          end
       end
-
       time:reset()
       
       -- backward :
       local df_do=self.criterion:backward(self.network.output, target)
       local currentlr = 1
-      local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
-      if not successb then 
-         if errormsgb=='stop' then
-            print('stopped during backprop')
-            return
-         else
-            error(errormsgb..' during backprop') 
+      if debugmode then 
+         self:backpropUpdate(input, df_do, target, currentlr) 
+      else
+         local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
+         if not successb then 
+            if errormsgb=='stop' then
+               print('stopped during backprop')
+               return
+            else
+               error(errormsgb..' during backprop') 
+            end
          end
       end
+
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then
