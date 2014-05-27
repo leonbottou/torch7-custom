@@ -54,15 +54,26 @@ function NeuralNet:setNetwork(net)
 end
 
 function NeuralNet:GPUWrap()
-   if cutorch and self.rawnetwork:isGPUCompatible() then
-      self.rawnetwork:cuda()
-      self.network=nxn.Sequential()
-      self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
-      self.network:add(self.rawnetwork)
-      self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
-      self.gpumode=true
-   else
-      self.network=self.rawnetwork
+   if not self.gpumode then
+      if cutorch and self.rawnetwork:isGPUCompatible() then
+         self.rawnetwork:cuda()
+         self.network=nxn.Sequential()
+         self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
+         self.network:add(self.rawnetwork)
+         self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
+         self.gpumode=true
+      else
+         self.network=self.rawnetwork
+         self.gpumode=false
+      end
+   end
+   return self.network
+end
+
+function NeuralNet:CPU()
+   if self.gpumode then
+      self.network=self.rawnetwork:float()
+      collectgarbage()
       self.gpumode=false
    end
    return self.network
@@ -112,9 +123,9 @@ end
 function NeuralNet:saveNet()
    self:cleanNetwork()
    if self.gpumode then 
-      self.rawnetwork:float()
+      self:CPU()
       torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
-      self.rawnetwork:cuda()
+      self:GPUwrap()
    else
       torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
    end   
