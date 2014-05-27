@@ -463,7 +463,7 @@ end
 
 
 function SpatialConvolution:getDisposableTensors()
-   local t
+   local t = {}
    table.insert(t, self.output)
    table.insert(t, self.gradInput)
    table.insert(t, self.adaRateWeight)
