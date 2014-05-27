@@ -125,7 +125,7 @@ function NeuralNet:saveNet()
    if self.gpumode then 
       self:CPU()
       torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
-      self:GPUwrap()
+      self:GPUWrap()
    else
       torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
    end   
