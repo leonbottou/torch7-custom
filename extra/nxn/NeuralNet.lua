@@ -333,6 +333,7 @@ end
 
 function NeuralNet:forward(input, target)
    self:GPUWrap()
+   self.network:setBackProp()   
    self.network:forward(input)
    if target then 
       self.criterion:forward(self.network.output, target)
@@ -420,7 +421,6 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
    while self.epochcount<nepochs do
       -- put all modules in train mode (useful for dropout)
       self:setTestMode(false)
-      self.network:setBackProp()   
 
       -- init 
       if self.batchcount > self.trainsetsize then
