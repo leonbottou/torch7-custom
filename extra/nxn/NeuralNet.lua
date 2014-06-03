@@ -128,7 +128,7 @@ end
 
 -- you can change these to load another kind of batches...
 
-function NeuralNet:getBatch(batchidx)
+function NeuralNet:getBatch(batchidx, test)
    return self.dataset:getBatch(batchidx)
 end
 
@@ -137,7 +137,11 @@ function NeuralNet:cacheBatch(batchidx)
 end
 
 function NeuralNet:getTestBatch(batchidx)
-   return self:getBatch(batchidx)
+   return self:getBatch(batchidx, true)
+end
+
+function NeuralNet:getTrainBatch(batchidx)
+   return self:getBatch(batchidx, false)
 end
 
 --
@@ -359,7 +363,7 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
          self:cacheBatch(nextbatchidx)
       end
 
-      local input, target = self:getBatch(batchidx)
+      local input, target = self:getTrainBatch(batchidx)
       
       -- forward 
       local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
