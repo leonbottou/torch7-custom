@@ -38,6 +38,7 @@ function NeuralNet:__init()
       self.testcostvalues = {}         -- we want to store the values of the cost during test passes
       
       self.lasttraincall = {}
+      self.gpumode=false
 end
 
 local function zapTensor(a)
@@ -48,9 +49,35 @@ local function zapTensor(a)
 end
 
 function NeuralNet:setNetwork(net)
-   self.network=net
+   self.rawnetwork=net
+   self:GPUWrap()
 end
 
+function NeuralNet:GPUWrap()
+   if not self.gpumode then
+      if cutorch and self.rawnetwork:isGPUCompatible() then
+         self.rawnetwork:cuda()
+         self.network=nxn.Sequential()
+         self.network:add(nxn.Copy('torch.FloatTensor', 'torch.CudaTensor'))
+         self.network:add(self.rawnetwork)
+         self.network:add(nxn.Copy('torch.CudaTensor', 'torch.FloatTensor'))
+         self.gpumode=true
+      else
+         self.network=self.rawnetwork
+         self.gpumode=false
+      end
+   end
+   return self.network
+end
+
+function NeuralNet:CPU()
+   if self.gpumode then
+      self.network=self.rawnetwork:float()
+      collectgarbage()
+      self.gpumode=false
+   end
+   return self.network
+end
 
 function NeuralNet:cleanNetwork()
    self.network:clean()
@@ -95,7 +122,13 @@ end
 
 function NeuralNet:saveNet()
    self:cleanNetwork()
-   torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+   if self.gpumode then 
+      self:CPU()
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+      self:GPUWrap()
+   else
+      torch.save(paths.concat(self.checkpointdir, self.checkpointname), self)
+   end   
 end
 
 function NeuralNet:setVisualizationDir(vizdir)
@@ -164,26 +197,74 @@ function NeuralNet:showL1Filters()
    end
 end
 
+function NeuralNet:updateConfusion(target)
+   if self.confusion then
+      if target:size(1) ~= self.network.output:size(1) then 
+         error('network output and target sizes are inconsistent') 
+      end
+      if self.network.output:dim()==2 then
+         for k=1,target:size(1) do
+            self.confusion:add(self.network.output[{k,{}}], target[{k}])
+         end
+      end
+   end
+end
 
 
+--   table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), avgvalid})
+function NeuralNet:insertTrainCost(batchidx, cost, avgvalid)
+   if not self.trainCostTensor then
+      self.trainCostTensor=torch.Tensor(1000, 4):fill(-1)
+      self.trainCostTensorCount=0
+   end
+   if self.trainCostTensorCount >= self.trainCostTensor:size(1) then
+      self.trainCostTensor = self.growTensor(self.trainCostTensor, 1, 1000)
+   end
+   self.trainCostTensorCount=self.trainCostTensorCount+1
+   self.trainCostTensor[{self.trainCostTensorCount, 1}]=self:getNumBatchesSeen()-1
+   self.trainCostTensor[{self.trainCostTensorCount, 2}]=batchidx
+   self.trainCostTensor[{self.trainCostTensorCount, 3}]=cost
+   self.trainCostTensor[{self.trainCostTensorCount, 4}]=avgvalid
+end
+
+--   table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, avgvalid})
+
+function NeuralNet:insertTestCost(meancost, avgvalid)
+   if not self.testCostTensor then
+      self.testCostTensor=torch.Tensor(200, 3):fill(-1)
+      self.testCostTensorCount=0
+   end
+   if self.testCostTensorCount >= self.testCostTensor:size(1) then
+      self.testCostTensor = self.growTensor(self.testCostTensor, 1, 200)
+   end
+   self.testCostTensorCount=self.testCostTensorCount+1   
+   self.testCostTensor[{self.testCostTensorCount, 1}] = self:getNumBatchesSeen()
+   self.testCostTensor[{self.testCostTensorCount, 2}] = meancost
+   self.testCostTensor[{self.testCostTensorCount, 3}] = avgvalid
+end
+
+function NeuralNet.growTensor(tensor, dim, value)
+   local newtensorsize = #tensor
+   newtensorsize[dim]=newtensorsize[dim]+value
+   local newtensor = tensor.new(newtensorsize)
+   newtensor:narrow(dim, 1, tensor:size(dim)):copy(tensor)
+   zapTensor(tensor)
+   return newtensor
+end
 
 function NeuralNet:plotError()
    require 'gnuplot'
-   local npoints=#self.costvalues
-   local costvector=torch.Tensor(npoints)
-   for i=1,npoints do
-      costvector[{i}]=self.costvalues[i][3]
+   local npoints=self.trainCostTensorCount
+   local costvector=self.trainCostTensor:narrow(1, 1, npoints):select(2,3):contiguous()
+   
+   local ntestpoints = self.testCostTensorCount or 0
+   local testcostvector, testcostindices
+   if self.testCostTensor then
+      testcostvector = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,2):contiguous()
+      testcostindices = self.testCostTensor:narrow(1, 1, ntestpoints):select(2,1):contiguous()
    end
-   
-   local ntestpoints=#self.testcostvalues
-   local testcostvector=torch.Tensor(ntestpoints)
-   local testcostindices=torch.Tensor(ntestpoints)
-   
-   for i=1,ntestpoints do
-      testcostvector[{i}]=self.testcostvalues[i][2]
-      testcostindices[{i}]=self.testcostvalues[i][1]
-   end
-   
+
+
    if self.vizdir then
       local fignum = gnuplot.pngfigure(paths.concat(self.vizdir, 'error.png'))
    end
@@ -202,6 +283,7 @@ function NeuralNet:plotError()
    end
 end
 
+
 function NeuralNet:setTestMode(value)
    self.network:setTestMode(value)
 end
@@ -215,19 +297,12 @@ function NeuralNet:testBatch(valbatchidx, mod)
   local valbatch, valtarget=self:getTestBatch(valbatchidx)
   mod = mod or self.network
 
-  self:setTestMode(true)
-
-  self.network:forward(valbatch)
-  self.criterion:forward(self.network.output, valtarget)
-  if self.confusion then
-     if self.network.output:dim()==2 then
-        for k=1,valbatch:size(1) do
-           self.confusion:add(self.network.output[{k,{}}], valtarget[{k}])
-        end
-     end
+  self:forwardTest(valbatch, valtarget)
+  
+  if self.confusion then 
+     self:updateConfusion(valtarget)  
   end
 
-  self:setTestMode(false)
   return self.criterion.output, valbatch:size(1), valtarget, mod.output
 end
 
@@ -242,15 +317,18 @@ function NeuralNet:test()
     numexamples = numexamples + batch_numexamples
    end
    meancost=meancost/numexamples
+
+   local avgvalid = -1
    if self.confusion then 
       self.confusion:updateValids() 
-      print('mean cost on validation set : '..meancost.. ', average valid % : '..(self.confusion.averageValid*100))
-      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, self.confusion.averageValid*100})
+      avgvalid = self.confusion.averageValid*100
       self.confusion:zero()
+      print('mean cost on validation set : '..meancost.. ', average valid % : '..avgvalid)
    else
       print('mean cost on validation set : '..meancost)
-      table.insert(self.testcostvalues, {self:getNumBatchesSeen(), meancost, -1})
    end
+
+   self:insertTestCost(meancost, avgvalid)
    
 end
 
@@ -270,25 +348,44 @@ function NeuralNet:measure()
 end
 
 
-function NeuralNet:forwardprop(input, target, timer, batchidx)
+function NeuralNet:forward(input, target)
+   self:GPUWrap()
+   self.network:setBackProp()   
    self.network:forward(input)
-   self.criterion:forward(self.network.output, target)
+   if target then 
+      self.criterion:forward(self.network.output, target)
+      return self.network.output, self.criterion.output
+   end
+   return self.network.output
+end
+
+function NeuralNet:forwardTest(input, target)
+   self:setTestMode(true)
+   local output, cost = self:forward(input)
+   self:setTestMode(false)
+   return output, cost
+end
+
+
+function NeuralNet:forwardprop(input, target, timer, batchidx)
+   -- forward prop through the network
+   self:forward(input, target)
    
    -- confusion : only interesting for classification
+   local avgvalid = -1
    if self.confusion then 
-      if self.network.output:dim()==2 then
-         for k=1,input:size(1) do
-            self.confusion:add(self.network.output[{k,{}}], target[{k}])
-         end
-         self.confusion:updateValids()
-      end
-   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
-      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), self.confusion.averageValid*100})
-   self.confusion:zero()
+      self:updateConfusion(target)
+      self.confusion:updateValids()
+      avgvalid = self.confusion.averageValid*100
+   -- display happens here
+      print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', average valid % : '..(self.confusion.averageValid*100)..', time : '..time:time().real)   
+      self.confusion:zero()
    else
-   print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', time : '..time:time().real)   
-      table.insert(self.costvalues, {self:getNumBatchesSeen()-1, batchidx, self.criterion.output/input:size(1), -1})
+      print('epoch : '..self.epochcount..', batch num : '..(self.batchcount-1)..' idx : '..batchidx..', cost : '..self.criterion.output/input:size(1)..', time : '..time:time().real)   
    end   
+
+   -- storing costs happens here
+   self:insertTrainCost(batchidx, self.criterion.output/input:size(1), avgvalid)
 end
 
 
@@ -336,12 +433,13 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       print('no information on the number of classes : use NeuralNet:setNumclasses(n)') 
    end
   
+   print("don't forget to do NeuralNet:setSaveMem(true) if you are not interested in getting the intermediate data")
+  
    time=torch.Timer()
    -- training loop
    while self.epochcount<nepochs do
       -- put all modules in train mode (useful for dropout)
       self:setTestMode(false)
-      self.network:setBackProp()   
 
       -- init 
       if self.batchcount > self.trainsetsize then
@@ -366,30 +464,38 @@ function NeuralNet:train(nepochs, savefrequency, measurementsfrequency)
       local input, target = self:getTrainBatch(batchidx)
       
       -- forward 
-      local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
-      if not successf then 
-         if errormsgf=='stop' then
-            print('stopped during forward prop')
-            return
-         else
-            error(errormsgf..' during forward prop') 
+      if debugmode then 
+         self:forwardprop(input, target, time, batchidx)
+      else
+         local successf, errormsgf = pcall (self.forwardprop, self, input, target, time, batchidx)
+         if not successf then 
+            if errormsgf=='stop' then
+               print('stopped during forward prop')
+               return
+            else
+               error(errormsgf..' during forward prop') 
+            end
          end
       end
-
       time:reset()
       
       -- backward :
       local df_do=self.criterion:backward(self.network.output, target)
       local currentlr = 1
-      local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
-      if not successb then 
-         if errormsgb=='stop' then
-            print('stopped during backprop')
-            return
-         else
-            error(errormsgb..' during backprop') 
+      if debugmode then 
+         self:backpropUpdate(input, df_do, target, currentlr) 
+      else
+         local successb, errormsgb = pcall(self.backpropUpdate, self, input, df_do, target, currentlr)
+         if not successb then 
+            if errormsgb=='stop' then
+               print('stopped during backprop')
+               return
+            else
+               error(errormsgb..' during backprop') 
+            end
          end
       end
+
       
       if measurementsfrequency then
          if math.mod(self:getNumBatchesSeen(),measurementsfrequency)==0 then

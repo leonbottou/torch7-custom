@@ -21,6 +21,7 @@ function Reshape:__init(...)
       self.nelement = self.nelement * self.size[i]
       self.batchsize[i+1] = self.size[i]
    end
+   self.gpucompatible = true
 end
 
 function Reshape:updateOutput(input)

@@ -8,6 +8,7 @@ function Resize:__init(scale1, scale2, testscale)
    self.tmp=torch.Tensor()
    self.testmode=false
    self.gradInput=nil
+   self.gpucompatible = true
 end
 
 function Resize:updateOutput(input)

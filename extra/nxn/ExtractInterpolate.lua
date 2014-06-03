@@ -8,6 +8,7 @@ function ExtractInterpolate:__init()
    
    -- we need this for the texture
    self.tmp=torch.Tensor()
+   self.gpucompatible = true
 end
 
 function ExtractInterpolate:updateOutput(input)
@@ -45,7 +46,9 @@ function ExtractInterpolate:updateOutputCall(input, targety, targetx, y1, x1, y2
    return 
 end
 
-
+function ExtractInterpolate:getDisposableTensors()
+   return {self.output, self.gradInput, self.tmp}
+end
 
 
 

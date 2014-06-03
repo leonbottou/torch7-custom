@@ -5,6 +5,7 @@ function ReLU:__init()
    self.inplace=0
    self.outputSave=self.output
    self.gradInputSave=self.gradInput
+   self.gpucompatible = true
 end
 
 function ReLU:updateOutput(input)

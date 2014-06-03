@@ -7,6 +7,7 @@ function Affine:__init(factor, offset)
    if not factor then
       error('nxn.Affine(factor [, offset])')
    end
+   self.gpucompatible = true
 end
 
 function Affine:updateOutput(input)
