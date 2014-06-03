@@ -18,7 +18,7 @@ end
 function TexFunRandResize:updateOutput(input)
    
    if self.testmode then 
-      self.scale=testscale 
+      self.scale=self.testscale 
    else
       self.scale=torch.uniform(self.scale1,self.scale2)
    end
