@@ -3,6 +3,7 @@ local TexFunCustom, parent = torch.class('nxn.TexFunCustom', 'nxn.ExtractInterpo
 function TexFunCustom:__init(fn, fntest)
    parent.__init(self)
    self:setFunc(fn, fntest)
+   self.testmode=false
 end
 
 function TexFunCustom:setFunc(fn, fntest)

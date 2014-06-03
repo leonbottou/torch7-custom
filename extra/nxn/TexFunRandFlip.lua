@@ -3,6 +3,7 @@ local TexFunRandFlip, parent = torch.class('nxn.TexFunRandFlip', 'nxn.ExtractInt
 function TexFunRandFlip:__init(flipprob)
    parent.__init(self)
    self:setFlipProb(flipprob)
+   self.testmode=false
 end
 
 function TexFunRandFlip:setFlipProb(flipprob)

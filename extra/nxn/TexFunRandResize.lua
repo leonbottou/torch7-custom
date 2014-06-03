@@ -3,6 +3,7 @@ local TexFunRandResize, parent = torch.class('nxn.TexFunRandResize', 'nxn.Extrac
 function TexFunRandResize:__init(scale1, scale2, testscale)
    parent.__init(self)
    self:setScales(scale1, scale2, testscale)
+   self.testmode=false
 end
 
 function TexFunRandResize:setScales(scale1, scale2, testscale)

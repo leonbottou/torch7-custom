@@ -12,6 +12,7 @@ function TexFunCropJitter:setCrops(cropx, cropy)
    end
    self.cropx=cropx
    self.cropy=cropy or cropx
+   self.testmode=false
 end
 
 function TexFunCropJitter:updateOutput(input)
