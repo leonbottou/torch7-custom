@@ -10,18 +10,18 @@ SET (src png.c pngerror.c pngget.c pngmem.c pngpread.c pngread.c
 #  SET(src ${src} scripts/symbols.def)
 #ENDIF(MSVC)
 
-ADD_LIBRARY(libpng SHARED ${src})
-TARGET_LINK_LIBRARIES(libpng zlib)
+ADD_LIBRARY(png1 SHARED ${src})
+TARGET_LINK_LIBRARIES(png1 zlib)
 
 IF(UNIX)
-  TARGET_LINK_LIBRARIES(libpng m)
+  TARGET_LINK_LIBRARIES(png1 m)
 ENDIF(UNIX)
 
 # To compile example
 # ADD_EXECUTABLE(pngtest pngtest.c)
 # TARGET_LINK_LIBRARIES(pngtest png)
 
-INSTALL(TARGETS libpng 
+INSTALL(TARGETS png1
   LIBRARY DESTINATION "${Torch_INSTALL_LIB_SUBDIR}"
   ARCHIVE DESTINATION "${Torch_INSTALL_LIB_SUBDIR}"
   RUNTIME DESTINATION "${Torch_INSTALL_BIN_SUBDIR}")

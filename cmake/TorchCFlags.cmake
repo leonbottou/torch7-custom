@@ -62,6 +62,9 @@ ENDIF(CXX_HAS_NO_UNUSED_FUNCTION)
 IF(MSVC)
   # we want to respect the standard, and we are bored of those **** .
   ADD_DEFINITIONS(-D_CRT_SECURE_NO_DEPRECATE=1)
+  IF (CMAKE_SIZEOF_VOID_P EQUAL 4)
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /largeaddressaware")
+  ENDIF()
 ENDIF(MSVC)
 
 # OpenMP support?
