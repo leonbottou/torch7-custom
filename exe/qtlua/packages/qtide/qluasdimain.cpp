@@ -96,7 +96,7 @@ public slots:
 QLuaConsoleWidget::Private::Private(QLuaConsoleWidget *q)
   : QObject(q),  
     q(q), 
-    printTimings(false),
+    printTimings(true),
     elapsedValid(false)
 {
 }
@@ -125,7 +125,7 @@ QLuaConsoleWidget::Private::luaCommandEcho(QByteArray ps1,
     {
       QDateTime now = QDateTime::currentDateTime();
       QString msg = tr("starting on %1"); 
-      msg.prepend("\n|| ");
+      msg.prepend("\n-- ");
       msg.append("\n");
       if (q->document()->lastBlock().length() > 1)
         msg.prepend("\n");
@@ -166,7 +166,7 @@ QLuaConsoleWidget::Private::acceptingCommands(bool accepting)
       if (printTimings)
         {
           msg.append("\n");
-          msg.prepend("|| ");
+          msg.prepend("-- ");
           if (q->document()->lastBlock().length() > 1)
             msg.prepend("\n");
           q->addOutput(msg, "(console)/comment");
