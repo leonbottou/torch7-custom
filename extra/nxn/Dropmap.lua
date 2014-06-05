@@ -12,6 +12,7 @@ function Dropmap:__init(p)
    if (not p) or p<0 or p>1 then
       error('nxn.Dropmap(0<p<1), p = drop probability (p=0 => everything goes through)')
    end
+   self.gpucompatible = true
 end
 
 function Dropmap:updateOutput(input)

@@ -2,6 +2,7 @@ local Sequential, parent = torch.class('nxn.Sequential', 'nxn.Module')
 
 function Sequential:__init()
    self.modules = {}
+   self.gpucompatible = true
 end
 
 function Sequential:add(module)

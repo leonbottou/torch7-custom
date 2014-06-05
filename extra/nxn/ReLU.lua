@@ -5,13 +5,14 @@ function ReLU:__init()
    self.inplace=0
    self.outputSave=self.output
    self.gradInputSave=self.gradInput
+   self.gpucompatible = true
 end
 
 function ReLU:updateOutput(input)
    if self.inplace==1 then
       self.output=input
    else
-      self.output=self.outputsave
+      self.output=self.outputSave
    end
    return input.nxn.ReLU_updateOutput(self, input)
 end

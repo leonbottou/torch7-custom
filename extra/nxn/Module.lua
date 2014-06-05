@@ -7,6 +7,7 @@ function Module:__init()
    self.requiresGradients = true
    self.name = ''
    self.saveMem = false
+   self.gpucompatible = false
 end
 
 function Module:parameters()
@@ -250,6 +251,16 @@ end
 
 function Module:setName(name)
    self.name=name
+end
+
+function Module:isGPUCompatible(...)
+   local gpucompatible = self.gpucompatible
+   if self.modules then
+      for _,module in ipairs(self.modules) do
+         gpucompatible = gpucompatible and module:isGPUCompatible()
+      end
+   end
+   return gpucompatible
 end
 
 

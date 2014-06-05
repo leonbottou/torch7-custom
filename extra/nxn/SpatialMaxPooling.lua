@@ -12,6 +12,7 @@ function SpatialMaxPooling:__init(poolW, poolH, dW, dH, shdmem)
    self.dH = dH
    self.shdmem = shdmem or 1
    self.indices = torch.Tensor()
+   self.gpucompatible = true
 end
 
 

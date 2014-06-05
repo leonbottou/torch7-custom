@@ -1,5 +1,10 @@
 local SoftMax, parent = torch.class('nxn.SoftMax', 'nxn.Module')
 
+function SoftMax:__init()
+   parent.__init(self)
+   self.gpucompatible = true
+end
+
 function nxn.SoftMax:updateOutput(input)
    self.output:resizeAs(input)
    self.output:copy(input)

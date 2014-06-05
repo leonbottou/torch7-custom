@@ -3,6 +3,7 @@ local MultiClassNLLCriterion, parent = torch.class('nxn.MultiClassNLLCriterion',
 function MultiClassNLLCriterion:__init()
    parent.__init(self)
    self.tmp=torch.Tensor()
+   print('CAREFUL ! ALL TARGETS MUST BE EITHER -1 OR 1 !')
 end
 
 function MultiClassNLLCriterion:updateOutput(input, target)

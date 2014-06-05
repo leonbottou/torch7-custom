@@ -7,6 +7,7 @@ function CrossMapNormalization:__init(alpha, beta, k, n)
    self.k = k or 1
    self.n = n or 5
    self.z=torch.Tensor()
+   self.gpucompatible = true
 end
 
 function CrossMapNormalization:updateOutput(input)
