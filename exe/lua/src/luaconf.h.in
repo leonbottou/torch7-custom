@@ -23,6 +23,7 @@
 #cmakedefine LUA_USE_READLINE_EVENT_HOOK 1
 #cmakedefine LUA_USE_MODULE_AND_LIBRARY 1
 #cmakedefine LUA_BUILD_AS_DLL 1
+#cmakedefine LUA_ACTUAL_EXECDIR "@LUA_ACTUAL_EXECDIR@"
 
 #endif
 

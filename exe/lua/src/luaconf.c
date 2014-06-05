@@ -97,7 +97,9 @@ sbaddsf(SB *sb, char *s)
 static const char *
 executable_dir(const char *progname)
 {
-  char *lb;
+#if _DEBUG && defined(LUA_ACTUAL_EXECDIR)
+	return LUA_ACTUAL_EXECDIR;
+#else  char *lb;
   char buff[MAX_PATH + 1];
   DWORD nsize = sizeof(buff)/sizeof(char);
   DWORD n = GetModuleFileNameA(NULL, buff, nsize);
@@ -109,6 +111,7 @@ executable_dir(const char *progname)
     if (*lb == '\\')
       *lb = '/';
   return _strdup(buff);
+#endif
 }
 
 #else
