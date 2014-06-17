@@ -361,7 +361,7 @@ end
 
 function NeuralNet:forwardTest(input, target)
    self:setTestMode(true)
-   local output, cost = self:forward(input)
+   local output, cost = self:forward(input, target)
    self:setTestMode(false)
    return output, cost
 end
