@@ -1,4 +1,4 @@
-local LogSoftMax = torch.class('nxn.LogSoftMax', 'nxn.Module')
+local LogSoftMax, parent = torch.class('nxn.LogSoftMax', 'nxn.Module')
 
 function LogSoftMax:__init(p)
    parent.__init(self)
