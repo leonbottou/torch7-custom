@@ -17,8 +17,7 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.padright = padright or 0
    self.padtop = padtop or 0
    self.padbottom = padbottom or 0
-   self.overlap = overlap or 0
-   self.addgrads=0
+   self.overlap = overlap or 0 -- whether BLAS supports overlapping matrices or not (default 0)
    self.tmpweight=torch.Tensor()
    self.tmpgradweight=torch.Tensor()
 

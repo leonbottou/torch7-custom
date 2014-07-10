@@ -467,7 +467,7 @@ __global__ void SCcopyGradOut(float* goptr, float* gocpyptr, int goh, int gow, i
 
 
 
-__global__ void SCcopyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih, int padtop, int padleft, int ih, int iw, float addgrads)
+__global__ void SCcopyGradinResult(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih, int padtop, int padleft, int ih, int iw)
 {
    /*
       blockIdx.z  = [ 0, bs-1 ] (it1)
@@ -505,7 +505,7 @@ __global__ void SCcopyGradinResult(float* gradinptr, float* resptr, int throwawa
       
             for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
             {
-               tresptr[it4]= tresptr[it4]*addgrads + tgradinptr[it4];
+               tresptr[it4]= tgradinptr[it4];
             }
          }
       }
@@ -569,7 +569,6 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
   int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
-  float addgrads = luaT_getfieldchecknumber(L, 1, "addgrads");
   //assert(overlap==1);
 
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
@@ -867,7 +866,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    int gs3 = gradin->stride[3];
  
 
-   SCcopyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw, addgrads);
+   SCcopyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw);
    /*
       blockIdx.z  = [ 0, bs-1 ] (it1)
       blockIdx.y  = [ 0 ] 
