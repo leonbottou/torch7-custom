@@ -48,35 +48,8 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.gpucompatible = true
 end
 
-function SpatialConvolution:setLearningRate(lr)
-   if lr > 0 or lr==0 then
-      self.learningRate=lr
-      self.adaptiveLR = false
-      self.memoryWeight = nil
-      self.memoryBias = nil
-      self.adaRateWeight = nil
-      self.adaRateBias = nil
-      collectgarbage()
-   else
-      error('learning rate must be positive or 0')   
-   end
-end
 
-function SpatialConvolution:setMomentum(mom)
-   if mom > 0 or mom==0 then
-      self.momentum=mom
-   else
-      error('momentum must be positive or 0')   
-   end
-end
 
-function SpatialConvolution:setWeightDecay(wd)
-   if wd > 0 or wd==0 then
-      self.weightDecay=wd
-   else
-      error('weight decay must be positive or 0')   
-   end
-end
 
 function SpatialConvolution:reset(stdv)
    if stdv then
@@ -345,9 +318,104 @@ function SpatialConvolution:accGradParameters(input, gradOutput, scale)
 end
 
 
-function SpatialConvolution:needGradients()
-   return (self.learningRate > 0 or self.adaptiveLR)
+
+
+
+
+
+
+
+function SpatialConvolution:setLearningRate(lr)
+   if lr > 0 or lr==0 then
+      self.learningRate=lr
+      self.adaptiveLR = false
+      self.memoryWeight = nil
+      self.memoryBias = nil
+      self.adaRateWeight = nil
+      self.adaRateBias = nil
+      collectgarbage()
+   else
+      error('learning rate must be positive or 0')   
+   end
 end
+
+
+
+
+
+function SpatialConvolution:setMomentum(mom)
+   if mom > 0 or mom==0 then
+      self.momentum=mom
+   else
+      error('momentum must be positive or 0')   
+   end
+end
+
+function SpatialConvolution:applyMomentum()
+   self.gradWeight:mul(self.momentum)
+   self.gradBias:mul(self.momentum)
+end
+
+
+
+
+function SpatialConvolution:setWeightDecay(wd)
+   if wd > 0 or wd==0 then
+      self.weightDecay=wd
+   else
+      error('weight decay must be positive or 0')   
+   end
+end
+
+function SpatialConvolution:applyWeightDecay()
+   self.gradWeight:add(self.weightDecay, self.weight)
+   self.gradBias:add(self.weightDecay, self.bias)
+end
+
+
+
+
+
+
+
+
+function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
+   self.masterLR=masterLR or 1e-3 -- upper bound
+   self.sensitivity = sensitivity or 1
+   self.adaptiveLR=true
+end
+
+function nxn.SpatialConvolution:computeRates()
+   -- or : second boolean is not checked if first is true (it would crash at :dim() call otherwise)
+   if (not self.adaRateWeight) or self.adaRateWeight:dim()==0 then -- init
+      self.adaRateWeight=self.weight.new(#self.weight):zero()
+   end
+   if (not self.adaRateBias) or self.adaRateBias:dim()==0 then -- init
+      self.adaRateBias=self.bias.new(#self.bias):zero()
+   end
+   if not self.memoryWeight then
+      self.memoryWeight=self.weight.new(#self.weight):fill(1e-10) -- should be 1
+   end
+   if not self.memoryBias then
+      self.memoryBias=self.bias.new(#self.bias):fill(1e-10) -- should be 1
+   end
+   self.adaRateWeight:fill(1)
+   self.adaRateBias:fill(1)
+   self.memoryWeight:addcmul(self.sensitivity, self.gradWeight, self.gradWeight)
+   self.memoryBias:addcmul(self.sensitivity, self.gradBias, self.gradBias)
+   self.adaRateWeight:cdiv(self.memoryWeight):sqrt():mul(self.masterLR)
+   self.adaRateBias:cdiv(self.memoryBias):sqrt():mul(self.masterLR)
+end
+
+
+
+
+
+
+
+
+
+
 
 function SpatialConvolution:updateParameters()
    if self.learningRate > 0 or self.adaptiveLR then
@@ -364,15 +432,33 @@ function SpatialConvolution:updateParameters()
    end
 end
 
-function SpatialConvolution:applyMomentum()
-   self.gradWeight:mul(self.momentum)
-   self.gradBias:mul(self.momentum)
+
+
+
+
+
+
+
+function SpatialConvolution:needGradients()
+   return (self.learningRate > 0 or self.adaptiveLR)
 end
 
-function SpatialConvolution:applyWeightDecay()
-   self.gradWeight:add(self.weightDecay, self.weight)
-   self.gradBias:add(self.weightDecay, self.bias)
+function SpatialConvolution:getDisposableTensors()
+   local t = {}
+   table.insert(t, self.output)
+   table.insert(t, self.gradInput)
+   table.insert(t, self.adaRateWeight)
+   table.insert(t, self.adaRateBias)
+   table.insert(t, self.tmpweight)
+   table.insert(t, self.tmpgradweight)
+   return t
 end
+
+
+
+
+
+
 
 
 --SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom)
@@ -420,46 +506,9 @@ end
 
 
 
-function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
-   self.masterLR=masterLR or 1e-3 -- upper bound
-   self.sensitivity = sensitivity or 1
-   self.adaptiveLR=true
-end
-
-function nxn.SpatialConvolution:computeRates()
-   -- or : second boolean is not checked if first is true (it would crash at :dim() call otherwise)
-   if (not self.adaRateWeight) or self.adaRateWeight:dim()==0 then -- init
-      self.adaRateWeight=self.weight.new(#self.weight):zero()
-   end
-   if (not self.adaRateBias) or self.adaRateBias:dim()==0 then -- init
-      self.adaRateBias=self.bias.new(#self.bias):zero()
-   end
-   if not self.memoryWeight then
-      self.memoryWeight=self.weight.new(#self.weight):fill(1e-10) -- should be 1
-   end
-   if not self.memoryBias then
-      self.memoryBias=self.bias.new(#self.bias):fill(1e-10) -- should be 1
-   end
-   self.adaRateWeight:fill(1)
-   self.adaRateBias:fill(1)
-   self.memoryWeight:addcmul(self.sensitivity, self.gradWeight, self.gradWeight)
-   self.memoryBias:addcmul(self.sensitivity, self.gradBias, self.gradBias)
-   self.adaRateWeight:cdiv(self.memoryWeight):sqrt():mul(self.masterLR)
-   self.adaRateBias:cdiv(self.memoryBias):sqrt():mul(self.masterLR)
-end
 
 
 
-function SpatialConvolution:getDisposableTensors()
-   local t = {}
-   table.insert(t, self.output)
-   table.insert(t, self.gradInput)
-   table.insert(t, self.adaRateWeight)
-   table.insert(t, self.adaRateBias)
-   table.insert(t, self.tmpweight)
-   table.insert(t, self.tmpgradweight)
-   return t
-end
 
 -- clip the weights (this is for later)
 
