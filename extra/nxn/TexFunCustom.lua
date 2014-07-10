@@ -5,7 +5,7 @@ local help_str =
 - fn(input) should return for training images : targety, targetx, y1, x1, y2, x2, y3, x3, y4, x4
 - fntest(input) should return for test images : targety, targetx, y1, x1, y2, x2, y3, x3, y4, x4
 
-Usage : m = nxn.TexFunCustom:(fn, fntest)
+Usage : m = nxn.TexFunCustom(fn, fntest)
 
 It only works in BATCH MODE (4D) with RGB inputs :
 - with the following input layout : (batch, y, x, RGB).
