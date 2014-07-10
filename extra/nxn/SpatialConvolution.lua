@@ -95,21 +95,12 @@ end
 
 
 
-
-
--- these functions are necessary because switching from one mode to another
--- requires a hard transpose.
--- should stick to a standard format, and copy kernels during convolution forward step
--- but well...
+-- "conv" mode does the weight tensor transposition when needed
 
 function SpatialConvolution:switchToFC()
    if self.mode=='fc' then return end
    if self.mode=='conv' then 
---      self.weight=self.weight:transpose(1,2):contiguous()
---      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
---      assert(self.weight:size(1)==self.nOutputPlane) -- just checkin'
       self.mode='fc'
---      print('switched layer to dense mode (kernel size == image size, no padding)')
       return
    end
 end
@@ -117,11 +108,7 @@ end
 function SpatialConvolution:switchToConv()
    if self.mode=='conv' then return end
    if self.mode=='fc' then 
---      self.weight=self.weight:transpose(1,2):contiguous()
---      self.gradWeight=self.gradWeight:transpose(1,2):contiguous()
---      assert(self.weight:size(1)==self.kH) -- just checkin'
       self.mode='conv'
---      print('switched layer to convolution mode (kernel size < image size)')
       return
    end
 end
@@ -134,10 +121,14 @@ function SpatialConvolution:switchToTrivial()
    self.weight=self.weight:resize(self.nOutputPlane, self.nInputPlane)
    self.gradWeight=self.gradWeight:resize(self.nOutputPlane, self.nInputPlane)
    self.mode='trivial' -- no-return point.
---   print('switched layer to trivial mode (1x1 kernel, no padding)')
 end
 
 function SpatialConvolution:optimize(input)
+-- switches the module to optimize computation :
+-- - case 1 : kernels are 1x1 : perform linear transform of features
+-- - case 2 : kernels are same size as input : perform fully-connected linear transform
+-- - case 3 : general case : perform convolution
+
    if self.padleft==0 and 
       self.padright==0 and 
       self.padtop==0 and 
