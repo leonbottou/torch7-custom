@@ -1,7 +1,7 @@
 local SpatialConvolution, parent = torch.class('nxn.SpatialConvolution', 'nxn.Module')
 
-local help_desc = 
-[[ This is the primary spatial convolution module.
+local help_str = 
+[[This is the primary spatial convolution module.
 It performs a 2D convolution with nOutputPlane 3D kernels of size (kW*kH*nInputPlane).
 
 Usage : m = nxn.SpatialConvolution(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom)
@@ -30,9 +30,7 @@ Backprop :
 - autoLR(masterLR, sensitivity) activates adaGrad scheduling.
 - only updateParameters updates the weights.
 
-(To do stuff manually : set learning rate to a positive value and override updateParameters() for your training loop.)
-
-]]
+(To do stuff manually : set learning rate to a positive value and override updateParameters() for your training loop.)]]
 
 
 function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom)
