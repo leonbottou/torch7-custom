@@ -1,5 +1,20 @@
 local TexFunCropJitter, parent = torch.class('nxn.TexFunCropJitter', 'nxn.ExtractInterpolate')
 
+local help_str = 
+[[Crops (cropx, cropy) pixels from the borders of an image. Based on ExtractInterpolate.
+At training time, crops a random patch.
+At test time, crops center patch.
+
+Usage : m = nxn.TexFunCropJitter(cropx, cropy)
+
+It only works in BATCH MODE (4D) with RGB inputs :
+- with the following input layout : (batch, y, x, RGB).
+- RGB are the contiguous dimension.
+- a single image must be a (1, y, x, RGB) tensor.
+
+The module doesn't require fixed-size inputs.]]
+
+
 function TexFunCropJitter:__init(cropx, cropy)
    parent.__init(self)
    self:setCrops(cropx, cropy)

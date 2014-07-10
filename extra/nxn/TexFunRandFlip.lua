@@ -1,5 +1,19 @@
 local TexFunRandFlip, parent = torch.class('nxn.TexFunRandFlip', 'nxn.ExtractInterpolate')
 
+local help_str = 
+[[Horizontally flips an input RGB image flipprob% of the time. Based on ExtractInterpolate.
+Doesn't flip at test time.
+
+Usage : m = nxn.TexFunRandFlip(flipprob)
+flipprob = 0.5 by default
+
+It only works in BATCH MODE (4D) with RGB inputs :
+- with the following input layout : (batch, y, x, RGB).
+- RGB are the contiguous dimension.
+- a single image must be a (1, y, x, RGB) tensor.
+
+The module doesn't require fixed-size inputs.]]
+
 function TexFunRandFlip:__init(flipprob)
    parent.__init(self)
    self:setFlipProb(flipprob)

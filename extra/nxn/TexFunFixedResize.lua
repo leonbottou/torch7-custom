@@ -1,5 +1,17 @@
 local TexFunFixedResize, parent = torch.class('nxn.TexFunFixedResize', 'nxn.ExtractInterpolate')
 
+local help_str = 
+[[Resizes an input RGB image by a fixed scale. Based on ExtractInterpolate.
+
+Usage : m = nxn.TexFunFixedResize(scale)
+
+It only works in BATCH MODE (4D) with RGB inputs :
+- with the following input layout : (batch, y, x, RGB).
+- RGB are the contiguous dimension.
+- a single image must be a (1, y, x, RGB) tensor.
+
+The module doesn't require fixed-size inputs.]]
+
 function TexFunFixedResize:__init(scale)
    parent.__init(self)
    self.scale=scale

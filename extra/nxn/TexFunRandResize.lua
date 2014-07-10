@@ -1,5 +1,18 @@
 local TexFunRandResize, parent = torch.class('nxn.TexFunRandResize', 'nxn.ExtractInterpolate')
 
+local help_str = 
+[[Resizes an image by a random factor uniformly sampled in (scale1,scale2). Based on ExtractInterpolate.
+At test time, resizes by factor testscale.
+
+Usage : m = nxn.TexFunRandResize(scale1, scale2, testscale)
+
+It only works in BATCH MODE (4D) with RGB inputs :
+- with the following input layout : (batch, y, x, RGB).
+- RGB are the contiguous dimension.
+- a single image must be a (1, y, x, RGB) tensor.
+
+The module doesn't require fixed-size inputs.]]
+
 function TexFunRandResize:__init(scale1, scale2, testscale)
    parent.__init(self)
    self:setScales(scale1, scale2, testscale)

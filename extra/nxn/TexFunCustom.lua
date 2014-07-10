@@ -1,5 +1,20 @@
 local TexFunCustom, parent = torch.class('nxn.TexFunCustom', 'nxn.ExtractInterpolate')
 
+local help_str = 
+[[Custom version of ExtractInterpolate, where user should specify :
+- fn(input) should return for training images : targety, targetx, y1, x1, y2, x2, y3, x3, y4, x4
+- fntest(input) should return for test images : targety, targetx, y1, x1, y2, x2, y3, x3, y4, x4
+
+Usage : m = nxn.TexFunCustom:(fn, fntest)
+
+It only works in BATCH MODE (4D) with RGB inputs :
+- with the following input layout : (batch, y, x, RGB).
+- RGB are the contiguous dimension.
+- a single image must be a (1, y, x, RGB) tensor.
+
+The module doesn't require fixed-size inputs.]]
+
+
 function TexFunCustom:__init(fn, fntest)
    parent.__init(self)
    self:setFunc(fn, fntest)
