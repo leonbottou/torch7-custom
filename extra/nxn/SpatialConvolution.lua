@@ -1,5 +1,39 @@
 local SpatialConvolution, parent = torch.class('nxn.SpatialConvolution', 'nxn.Module')
 
+local help_desc = 
+[[ This is the primary spatial convolution module.
+It performs a 2D convolution with nOutputPlane 3D kernels of size (kW*kH*nInputPlane).
+
+Usage : m = nxn.SpatialConvolution(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom)
+- nInputPlane is the number of input planes.
+- nOutputPlane is the number of output planes.
+- kW/kH is the kernel width/height.
+- dW/dH is the stride over the x/y dimension.
+- padleft, padright, padtop, padbottom are the amount of zero-padding pixels.
+
+
+It only works in BATCH MODE (4D) :
+- with the following input layout : (batch, y, x, channels).
+- channels are the contiguous dimension.
+- a single image must be a (1, y, x, channels) tensor.
+
+
+The module doesn't require fixed-size inputs but it will work faster in :
+- trivial mode : kW=kH=dW=dH=1, paddings=0, (performs a per-pixel linear transform)
+- fully-connected mode : kW = input width, kH = input height, paddings = 0, (performs global linear transform)
+- otherwise it will use the standard convolution, that is based on BLAS GEMM.
+The module switches between fully-connected and conv at training time if possible.
+
+Backprop : 
+- momentum and weight decay (disabled by default) are applied during the call to accGradParameters().
+- accGradParameters is disabled if the learning rate is 0.
+- autoLR(masterLR, sensitivity) activates adaGrad scheduling.
+- only updateParameters updates the weights.
+
+(To do stuff manually : set learning rate to a positive value and override updateParameters() for your training loop.)
+
+]]
+
 
 function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padtop, padbottom)
    parent.__init(self)
