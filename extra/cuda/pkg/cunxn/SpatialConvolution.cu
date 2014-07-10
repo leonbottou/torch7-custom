@@ -91,7 +91,7 @@ __global__ void SCinputcopykernel(float* inputptr, float* icopyptr, int stridey,
 
 
 __global__ void SCoutputcopykernel(float* outputptr, float* ocopyptr, float* biasptr, int bs, int oh, 
-      int ow, int op, int toh, int tow, float alpha, float beta, int outputstr0, int outputstr1, int outputstr2, int outputstr3)
+      int ow, int op, int toh, int tow, int outputstr0, int outputstr1, int outputstr2, int outputstr3)
       {
       /* blockIdx.z  = it1   [ 0, bs-1      ]
          blockIdx.y  = it2   [ 0, oh-1      ]
@@ -171,9 +171,6 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
 
-  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  float beta = luaT_getfieldchecknumber(L, 1, "beta");
-  
   float onef=1;
 
   int bs = input->size[0];
@@ -329,8 +326,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   int outputstr2 = output->stride[2];
   int outputstr3 = output->stride[3];
   
-  SCoutputcopykernel <<<ocopyblocks, ocopythreads>>> (outputptr, ocopyptr, biasptr, bs, oh, ow, op, toh, tow, alpha, beta, outputstr0, outputstr1, outputstr2, outputstr3);
-  // alpha and beta are actually not used
+  SCoutputcopykernel <<<ocopyblocks, ocopythreads>>> (outputptr, ocopyptr, biasptr, bs, oh, ow, op, toh, tow, outputstr0, outputstr1, outputstr2, outputstr3);
 
 
   // check for errors
@@ -1003,9 +999,6 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
 
-  float alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  float beta = luaT_getfieldchecknumber(L, 1, "beta");
-  
 
   float onef=1;
 

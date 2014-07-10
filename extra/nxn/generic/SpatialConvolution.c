@@ -43,9 +43,6 @@ static int nxn_(SpatialConvolution_updateOutput)(lua_State *L)
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
 
-  real alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  real beta = luaT_getfieldchecknumber(L, 1, "beta");
-
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *bias = luaT_getfieldcheckudata(L, 1, "bias", torch_Tensor);
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
@@ -208,7 +205,6 @@ int it1;
 
   THTensor_(fill)(output, 0);
 
-  /* here we take alpha = 1 and beta = 0 */
 	int itout0=0;
 	int itocpy0=0;
 	int it1;
@@ -659,9 +655,6 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
 
   int overlap = luaT_getfieldcheckint(L, 1, "overlap");
 
-  real alpha = luaT_getfieldchecknumber(L, 1, "alpha");
-  real beta = luaT_getfieldchecknumber(L, 1, "beta");
-
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "tmpgradweight", torch_Tensor);
   THTensor *tmpgradweight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
@@ -790,7 +783,6 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
   real* ocpyptr = THTensor_(data)(ocopy);
   real* gradbiasptr = THTensor_(data)(gradBias);
   
-  /* here we take alpha = 1 and beta = 0 */
 	int itout0=0;
 	int itocpy0=0;
 	int it1;

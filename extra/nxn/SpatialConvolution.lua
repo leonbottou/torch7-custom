@@ -21,9 +21,6 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self.tmpweight=torch.Tensor()
    self.tmpgradweight=torch.Tensor()
 
-   self.alpha= alpha or 1
-   self.beta= beta or 0
-
    self.weight = torch.Tensor(nOutputPlane, kH, kW, nInputPlane)
    self.bias = torch.Tensor(nOutputPlane)
 
