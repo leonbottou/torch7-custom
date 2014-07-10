@@ -51,7 +51,11 @@ end
 
 
 
+
 function SpatialConvolution:reset(stdv)
+   --
+   -- resets weights according to gaussian (0,stdv) distribution
+   --
    if stdv then
       stdv = stdv
    else
@@ -67,8 +71,11 @@ end
 
 
 
-
+--
+-- the following functions are used to switch the convolution module in either trivial, fc or conv mode
 -- "conv" mode does the weight tensor transposition when needed
+-- "trivial" switch is a non-return point, which makes sense (no padding, 1x1 kernels, no stride)
+--
 
 function SpatialConvolution:switchToFC()
    if self.mode=='fc' then return end
@@ -135,8 +142,9 @@ end
 
 
 
-
--- update outputs
+--
+-- 3 functions to update outputs
+--
 
 function SpatialConvolution:updateOutputTrivial(input)
    -- input is flattened (view)
@@ -178,7 +186,11 @@ function SpatialConvolution:updateOutputConv(input)
 --   print('updateOutputConv')
 end
 
+
 function SpatialConvolution:updateOutput(input)
+   --
+   -- find the best computation mode and run it to update outputs
+   --
    if input:size(2)+self.padtop+self.padbottom<self.kH or input:size(3)+self.padleft+self.padright<self.kW then error ('input is too small') end
    self:optimize(input)
    if self.mode=='trivial' then self:updateOutputTrivial(input) end
@@ -193,7 +205,10 @@ end
 
 
 
--- update gradients
+--
+-- 3 functions to update gradients
+--
+
 
 function SpatialConvolution:updateGradInputTrivial(input, gradOutput)
    -- gradOutput is flattened (view)
@@ -246,6 +261,9 @@ function SpatialConvolution:updateGradInputConv(input, gradOutput)
 end
 
 function SpatialConvolution:updateGradInput(input, gradOutput)
+   --
+   -- find the best computation mode and run it to update gradients
+   --
    self:optimize(input)
    if self.doBackProp then 
       if self.mode=='trivial' then self:updateGradInputTrivial(input, gradOutput) end
@@ -304,6 +322,11 @@ function SpatialConvolution:accGradParametersConv(input, gradOutput, scale)
 end
 
 function SpatialConvolution:accGradParameters(input, gradOutput, scale)
+   --
+   -- find the best computation mode and run it to update gradients, if the module is learning
+   -- rescale by dividing by the number of examples in the batch
+   --
+
    if self.learningRate > 0 or self.adaptiveLR then 
       self:optimize(input)
       if not gradOutput then error('Y U NO gradOutput ???') end
@@ -326,6 +349,7 @@ end
 
 
 function SpatialConvolution:setLearningRate(lr)
+   -- set manual or zero learning rates (adagrad rates will be purged)
    if lr > 0 or lr==0 then
       self.learningRate=lr
       self.adaptiveLR = false
@@ -380,6 +404,9 @@ end
 
 
 function nxn.SpatialConvolution:autoLR(masterLR, sensitivity)
+   --
+   -- activate adagrad following the formula : lr(x_{i,t}) = masterLR / (sqrt (1e-10 + sensitivity * sum_{t-1}(g_{i,t}^2) ) ) 
+   --
    self.masterLR=masterLR or 1e-3 -- upper bound
    self.sensitivity = sensitivity or 1
    self.adaptiveLR=true
@@ -418,6 +445,9 @@ end
 
 
 function SpatialConvolution:updateParameters()
+   --
+   -- update the parameters using adagrad (or not)
+   --
    if self.learningRate > 0 or self.adaptiveLR then
       if self.adaptiveLR then
          self:computeRates()
@@ -440,10 +470,12 @@ end
 
 
 function SpatialConvolution:needGradients()
+   -- return whether the module needs gradients itself or not (used for memory optimization)
    return (self.learningRate > 0 or self.adaptiveLR)
 end
 
 function SpatialConvolution:getDisposableTensors()
+   -- this is used to purge the unnecessary tensors after usage (used for memory optimization)
    local t = {}
    table.insert(t, self.output)
    table.insert(t, self.gradInput)
