@@ -69,6 +69,7 @@ void transposeWeightMatrix(THCudaTensor* in, THCudaTensor* out)
 
 
 
+
 __global__ void SCinputcopykernelsmall(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
       int iw, int ip, int padtop, int padleft, int toh, int tiw)
 {
@@ -136,6 +137,42 @@ __global__ void SCinputcopykernel(float* inputptr, float* icopyptr, int stridey,
       }
 }
 
+
+
+
+
+void unfoldInput(THCudaTensor* input, THCudaTensor* icopy, int stridey, int padtop, int padleft, int padright, int padbottom, int tih, int tiw, int toh, int tow)
+{
+
+  int bs = input->size[0];
+  int ih = input->size[1];
+  int iw = input->size[2];
+  int ip = input->size[3];
+
+  int inputstr0 = input->stride[0];
+  int inputstr1 = input->stride[1];
+  int inputstr2 = input->stride[2];
+  int inputstr3 = input->stride[3];
+
+  THCudaTensor_resize5d(icopy, stridey, bs, toh, tiw, ip);
+  THCudaTensor_fill(icopy, 0);
+
+  float* icopyptr=THCudaTensor_data(icopy);
+  float* inputptr=THCudaTensor_data(input);
+
+ 
+  if(ip<32 && THCudaTensor_isContiguous(input)) {
+      dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
+      dim3 icopythreads(MIN(32,ip), 32/ip);
+      SCinputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
+  }
+  else {
+      dim3 icopyblocks(iw, bs, stridey);
+      dim3 icopythreads(32);
+      SCinputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw, inputstr0, inputstr1, inputstr2, inputstr3);
+  }
+  
+}
 
 
 
@@ -239,7 +276,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   assert(tih >= pih && pih >= ih);
 
   /*icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
-  THLongStorage *icopysize = THLongStorage_newWithSize(5);
+/*  THLongStorage *icopysize = THLongStorage_newWithSize(5);
   icopysize->data[0]=stridey;
   icopysize->data[1]=bs;
   icopysize->data[2]=toh;
@@ -261,9 +298,10 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
       dim3 icopyblocks(iw, bs, stridey);
       dim3 icopythreads(32);
       SCinputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw, inputstr0, inputstr1, inputstr2, inputstr3);
-  }
+  }*/
   
-
+	THCudaTensor* icopy = THCudaTensor_new();
+	unfoldInput(input, icopy, stridey, padtop, padleft, padright, padbottom, tih, tiw, toh, tow);
   
   THCudaTensor* kcopy = weight;
   
