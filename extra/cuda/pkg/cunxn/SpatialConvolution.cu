@@ -135,6 +135,9 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   THCudaTensor *bias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "bias", "torch.CudaTensor");
   THCudaTensor *weight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "tmpweight", "torch.CudaTensor");
 
+  /* contiguity check */ 
+  input = THCudaTensor_newContiguous(input);
+
 
   /* transpose weight dims 1 and 2 so it is in proper format */
 
@@ -526,6 +529,9 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
   THCudaTensor *result  = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradInput", "torch.CudaTensor");
   THCudaTensor *revk;
 
+  /* contiguity check */ 
+  input = THCudaTensor_newContiguous(input);
+  gradOutput = THCudaTensor_newContiguous(gradOutput);
 
 
 
@@ -959,6 +965,9 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
   THCudaTensor *tmpgradweight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
   THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
+  /* contiguity check */ 
+  input = THCudaTensor_newContiguous(input);
+  gradOutput = THCudaTensor_newContiguous(gradOutput);
 
 
   /* transpose weight dims 1 and 2 so it is in proper format */
