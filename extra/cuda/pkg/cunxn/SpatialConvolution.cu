@@ -198,6 +198,38 @@ __global__ void SCoutputcopykernel(float* outputptr, float* ocopyptr, float* bia
 
 
 
+void unpadAndAddBiasOutput(THCudaTensor* ocopy, THCudaTensor* output, THCudaTensor* bias, int bs, int oh, int ow, int op, int toh, int tow)
+{
+  // will output a contiguous matrix, except if the tensor is of proper size, in which case output will be recycled
+  if(output->nDimension==4)
+  {
+     if(output->size[0] != bs || output->size[1] != oh || output->size[2] != ow || output->size[3] != op)
+     {
+         THCudaTensor_resize4d(output, bs, oh, ow, op);
+     }
+  }
+  else //if the tensor doesn't exist...
+  {
+         THCudaTensor_resize4d(output, bs, oh, ow, op);
+  }
+   
+  float* ocopyptr=THCudaTensor_data(ocopy);
+  float* outputptr=THCudaTensor_data(output);
+  float* biasptr=THCudaTensor_data(bias);
+
+  dim3 ocopyblocks(ow, oh, bs);
+  dim3 ocopythreads(32);
+
+  int outputstr0 = output->stride[0];
+  int outputstr1 = output->stride[1];
+  int outputstr2 = output->stride[2];
+  int outputstr3 = output->stride[3];
+  
+  SCoutputcopykernel <<<ocopyblocks, ocopythreads>>> (outputptr, ocopyptr, biasptr, bs, oh, ow, op, toh, tow, outputstr0, outputstr1, outputstr2, outputstr3);
+
+}
+
+
 
 
 static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
@@ -211,11 +243,8 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   /* contiguity check */ 
   input = THCudaTensor_newContiguous(input);
 
-
   /* transpose weight dims 1 and 2 so it is in proper format */ 
-
 	transposeWeightMatrix(tmpweight, weight);
-
 
   int stridex = luaT_getfieldcheckint(L, 1, "dW");
   int stridey = luaT_getfieldcheckint(L, 1, "dH");
@@ -275,39 +304,12 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   assert(tiw >= piw && piw >= iw);
   assert(tih >= pih && pih >= ih);
 
-  /*icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
-/*  THLongStorage *icopysize = THLongStorage_newWithSize(5);
-  icopysize->data[0]=stridey;
-  icopysize->data[1]=bs;
-  icopysize->data[2]=toh;
-  icopysize->data[3]=tiw;
-  icopysize->data[4]=ip;
-  THCudaTensor* icopy = THCudaTensor_newWithSize(icopysize, NULL);
-  THCudaTensor_fill(icopy, 0);
-
-  float* icopyptr=THCudaTensor_data(icopy);
-  float* inputptr=THCudaTensor_data(input);
-
- 
-  if(ip<32 && THCudaTensor_isContiguous(input)) {
-      dim3 icopyblocks(iw/(32/ip)+1, bs, stridey);
-      dim3 icopythreads(MIN(32,ip), 32/ip);
-      SCinputcopykernelsmall <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw);
-  }
-  else {
-      dim3 icopyblocks(iw, bs, stridey);
-      dim3 icopythreads(32);
-      SCinputcopykernel <<<icopyblocks, icopythreads>>> (inputptr, icopyptr, stridey, bs, ih, iw, ip, padtop, padleft, toh, tiw, inputstr0, inputstr1, inputstr2, inputstr3);
-  }*/
   
 	THCudaTensor* icopy = THCudaTensor_new();
 	unfoldInput(input, icopy, stridey, padtop, padleft, padright, padbottom, tih, tiw, toh, tow);
   
   THCudaTensor* kcopy = weight;
-  
-  
 
-  
   THCudaTensor* ocopy = THCudaTensor_newWithSize4d(bs, toh, tow, op);
   THCudaTensor_fill(ocopy, 0);
 
@@ -315,9 +317,17 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   cublasStatus_t err = cublasCreate(&handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
 
+   cudaStream_t* streams = (cudaStream_t*) malloc(nxs*sizeof(cudaStream_t));
+
+
+
    /* call GEMM */
 	int hcall;
    for (hcall=0; hcall<nxs; hcall++) {
+
+		cudaStreamCreate(&streams[hcall]);
+		cublasSetStream(handle, streams[hcall]);
+
 	   int vcall;
       for (vcall=0; vcall<kh; vcall++) {
          int sq = vcall / stridey;
@@ -355,36 +365,16 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
    }
 
 
+   for (hcall=0; hcall<nxs; hcall++) {
+		cudaStreamDestroy(streams[hcall]);
+	}
+
+	free(streams);
+
   err = cublasDestroy(handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
 
-  // will output a contiguous matrix, except if the tensor is of proper size, in which case output will be recycled
-  if(output->nDimension==4)
-  {
-     if(output->size[0] != bs || output->size[1] != oh || output->size[2] != ow || output->size[3] != op)
-     {
-         THCudaTensor_resize4d(output, bs, oh, ow, op);
-     }
-  }
-  else //if the tensor doesn't exist...
-  {
-         THCudaTensor_resize4d(output, bs, oh, ow, op);
-  }
-   
-  float* ocopyptr=THCudaTensor_data(ocopy);
-  float* outputptr=THCudaTensor_data(output);
-  float* biasptr=THCudaTensor_data(bias);
-
-  dim3 ocopyblocks(ow, oh, bs);
-  dim3 ocopythreads(32);
-
-  int outputstr0 = output->stride[0];
-  int outputstr1 = output->stride[1];
-  int outputstr2 = output->stride[2];
-  int outputstr3 = output->stride[3];
-  
-  SCoutputcopykernel <<<ocopyblocks, ocopythreads>>> (outputptr, ocopyptr, biasptr, bs, oh, ow, op, toh, tow, outputstr0, outputstr1, outputstr2, outputstr3);
-
+  unpadAndAddBiasOutput(ocopy, output, bias, bs, oh, ow, op, toh, tow);
 
   // check for errors
   cudaError_t lasterror = cudaGetLastError();
