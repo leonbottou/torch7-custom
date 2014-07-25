@@ -165,28 +165,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   input = THCudaTensor_newContiguous(input);
 
 
-  /* transpose weight dims 1 and 2 so it is in proper format 
-
-  int t_kH = tmpweight->size[1];
-  int t_op = tmpweight->size[0];
-  int t_kW = tmpweight->size[2];
-  int t_ip = tmpweight->size[3];
-  THCudaTensor_resize4d(weight, t_kH, t_op, t_kW, t_ip);
-
-  float* w0ptr = THCudaTensor_data(tmpweight);
-  float* w1ptr = THCudaTensor_data(weight);
-  
-  int w0str0   = tmpweight->stride[0];
-  int w0str1   = tmpweight->stride[1];
-  int w1str0   = weight->stride[0];
-  int w1str1   = weight->stride[1];
-  
-  dim3 transposeblocks(t_kH, t_op);
-  dim3 transposethreads(32);
-  
-  transpose12<<<transposeblocks,transposethreads>>>(w0ptr, w1ptr, w0str0, w0str1, w1str0, w1str1);
-  
-  /* end of transposition */ 
+  /* transpose weight dims 1 and 2 so it is in proper format */ 
 
 	transposeWeightMatrix(tmpweight, weight);
 
@@ -562,28 +541,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 
 
 
-  /* transpose weight dims 1 and 2 so it is in proper format
-
-  int t_kH = tmpweight->size[1];
-  int t_op = tmpweight->size[0];
-  int t_kW = tmpweight->size[2];
-  int t_ip = tmpweight->size[3];
-  THCudaTensor_resize4d(weight, t_kH, t_op, t_kW, t_ip);
-
-  float* w0ptr = THCudaTensor_data(tmpweight);
-  float* w1ptr = THCudaTensor_data(weight);
-  
-  int w0str0   = tmpweight->stride[0];
-  int w0str1   = tmpweight->stride[1];
-  int w1str0   = weight->stride[0];
-  int w1str1   = weight->stride[1];
-  
-  dim3 transposeblocks(t_kH, t_op);
-  dim3 transposethreads(32);
-  
-  transpose12<<<transposeblocks,transposethreads>>>(w0ptr, w1ptr, w0str0, w0str1, w1str0, w1str1);
-  
-  /* end of transposition */ 
+  /* transpose weight dims 1 and 2 so it is in proper format */ 
 
 	transposeWeightMatrix(tmpweight, weight);
 
@@ -997,28 +955,7 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
   gradOutput = THCudaTensor_newContiguous(gradOutput);
 
 
-  /* transpose weight dims 1 and 2 so it is in proper format
-
-  int t_kH = tmpgradweight->size[1];
-  int t_op = tmpgradweight->size[0];
-  int t_kW = tmpgradweight->size[2];
-  int t_ip = tmpgradweight->size[3];
-  THCudaTensor_resize4d(gradWeight, t_kH, t_op, t_kW, t_ip);
-
-  float* w0ptr = THCudaTensor_data(tmpgradweight);
-  float* w1ptr = THCudaTensor_data(gradWeight);
-  
-  int w0str0   = tmpgradweight->stride[0];
-  int w0str1   = tmpgradweight->stride[1];
-  int w1str0   = gradWeight->stride[0];
-  int w1str1   = gradWeight->stride[1];
-  
-  dim3 transposeblocks(t_kH, t_op);
-  dim3 transposethreads(32);
-  
-  transpose12<<<transposeblocks,transposethreads>>>(w0ptr, w1ptr, w0str0, w0str1, w1str0, w1str1);
-  
-  /* end of transposition */ 
+  /* transpose weight dims 1 and 2 so it is in proper format */
 
 	transposeWeightMatrix(tmpgradweight, gradWeight);
 
@@ -1208,27 +1145,6 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
 
   /* transpose weight dims 1 and 2 so it is in proper format */
 
-/*  int t_kH = tmpgradweight->size[1];
-  int t_op = tmpgradweight->size[0];
-  int t_kW = tmpgradweight->size[2];
-  int t_ip = tmpgradweight->size[3];
-  THCudaTensor_resize4d(gradWeight, t_kH, t_op, t_kW, t_ip);
-
-  float* w0ptr = THCudaTensor_data(tmpgradweight);
-  float* w1ptr = THCudaTensor_data(gradWeight);
-  
-  int w0str0   = tmpgradweight->stride[0];
-  int w0str1   = tmpgradweight->stride[1];
-  int w1str0   = gradWeight->stride[0];
-  int w1str1   = gradWeight->stride[1];
-  
-  dim3 transposeblocksrev(t_op, t_kH);
-  dim3 transposethreadsrev(32);
-  
-  transpose12<<<transposeblocksrev,transposethreadsrev>>>(w1ptr, w0ptr, w1str0, w1str1, w0str0, w0str1);
- 
- 
-  /* end of transposition */ 
 
 	transposeWeightMatrix(gradWeight, tmpgradweight);
 
