@@ -17,6 +17,58 @@
 
 
 
+__global__ void transpose12(float* in, float* out, int instr0, int instr1, int outstr0, int outstr1)
+{
+   /*
+      blockIdx.x =  [ 0, kH-1 ]
+      blockIdx.y =  [ 0, op-1 ]
+      threadIdx.x = [ 0, 31   ]
+   */
+   
+   in  +=   blockIdx.x * instr1 + blockIdx.y * instr0;
+   out +=   blockIdx.x * outstr0 + blockIdx.y * outstr1;
+   
+   for (int i=threadIdx.x; i<instr1; i+=blockDim.x)
+   {
+      out[i]=in[i];
+   }
+}
+
+
+
+void transposeWeightMatrix(THCudaTensor* in, THCudaTensor* out)
+{
+
+// this function transposes dimensions 1 and 2 of the tensor "in" and stores it in tensor "out"
+// works only for 4D tensors
+
+  int t_kH = in->size[1];
+  int t_op = in->size[0];
+  int t_kW = in->size[2];
+  int t_ip = in->size[3];
+  THCudaTensor_resize4d(out, t_kH, t_op, t_kW, t_ip);
+
+  float* w0ptr = THCudaTensor_data(in);
+  float* w1ptr = THCudaTensor_data(out);
+  
+  int w0str0   = in->stride[0];
+  int w0str1   = in->stride[1];
+  int w1str0   = out->stride[0];
+  int w1str1   = out->stride[1];
+  
+  dim3 transposeblocks(t_kH, t_op);
+  dim3 transposethreads(32);
+  
+  transpose12<<<transposeblocks,transposethreads>>>(w0ptr, w1ptr, w0str0, w0str1, w1str0, w1str1);
+
+}
+
+
+
+
+
+
+
 __global__ void SCinputcopykernelsmall(float* inputptr, float* icopyptr, int stridey, int bs, int ih, 
       int iw, int ip, int padtop, int padleft, int toh, int tiw)
 {
@@ -107,48 +159,6 @@ __global__ void SCoutputcopykernel(float* outputptr, float* ocopyptr, float* bia
 
 
 
-__global__ void transpose12(float* in, float* out, int instr0, int instr1, int outstr0, int outstr1)
-{
-   /*
-      blockIdx.x =  [ 0, kH-1 ]
-      blockIdx.y =  [ 0, op-1 ]
-      threadIdx.x = [ 0, 31   ]
-   */
-   
-   in  +=   blockIdx.x * instr1 + blockIdx.y * instr0;
-   out +=   blockIdx.x * outstr0 + blockIdx.y * outstr1;
-   
-   for (int i=threadIdx.x; i<instr1; i+=blockDim.x)
-   {
-      out[i]=in[i];
-   }
-}
-
-
-
-void transposeWeightMatrix(THCudaTensor* in, THCudaTensor* out)
-{
-
-  int t_kH = in->size[1];
-  int t_op = in->size[0];
-  int t_kW = in->size[2];
-  int t_ip = in->size[3];
-  THCudaTensor_resize4d(out, t_kH, t_op, t_kW, t_ip);
-
-  float* w0ptr = THCudaTensor_data(in);
-  float* w1ptr = THCudaTensor_data(out);
-  
-  int w0str0   = in->stride[0];
-  int w0str1   = in->stride[1];
-  int w1str0   = out->stride[0];
-  int w1str1   = out->stride[1];
-  
-  dim3 transposeblocks(t_kH, t_op);
-  dim3 transposethreads(32);
-  
-  transpose12<<<transposeblocks,transposethreads>>>(w0ptr, w1ptr, w0str0, w0str1, w1str0, w1str1);
-
-}
 
 
 
