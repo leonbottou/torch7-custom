@@ -6,6 +6,8 @@ function Dropout:__init(p)
    self.mask=torch.Tensor()
    self.testmode=false
    self.inplace=0
+   self.outputSave=self.output
+   self.gradInputSave=self.gradInput
    if (not p) or p<0 or p>1 then
       error('nxn.Dropout(0<p<1), p = drop probability (p=0 => everything goes through)')
    end
