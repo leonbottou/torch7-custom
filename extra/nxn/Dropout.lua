@@ -18,7 +18,7 @@ function Dropout:updateOutput(input)
    if self.inplace==1 then
       self.output=input
    else
-      self.output=self.outputsave
+      self.output=self.outputSave
       self.output:resizeAs(input):copy(input)
    end
 

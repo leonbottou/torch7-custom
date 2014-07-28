@@ -20,7 +20,7 @@ function Dropmap:updateOutput(input)
       if self.inplace==1 then
          self.output=input
       else
-         self.output=self.outputsave
+         self.output=self.outputSave
       end
       if self.sameoverbatch==1 then
          self.mask:resize(input:size(input:dim())):bernoulli(1-self.p)
@@ -32,7 +32,7 @@ function Dropmap:updateOutput(input)
       if self.inplace==1 then
          self.output=input
       else
-         self.output=self.outputsave
+         self.output=self.outputSave
          self.output:resizeAs(input):copy(input)
       end
       self.output:mul(1-self.p)
