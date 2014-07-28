@@ -560,6 +560,113 @@ __global__ void SCcopyGradinResult(float* gradinptr, float* resptr, int throwawa
 
 
 
+__global__ void SCcopyGradinResult2(float* gradinptr, float* resptr, int throwawayx, int throwawayy, int stridey, int rs0, int rs1, int rs2, int gs0, int gs1, int gs2, int gs3, int ip, int gih, int padtop, int padleft, int ih, int iw)
+{
+   /*
+      blockIdx.z  = [ 0, bs-1 ] (it1)
+      blockIdx.y  = [ 0 ] 
+      blockIdx.x  = [ 0, iw ] (it3) (giw-throwawayx ?)
+      threadIdx.x = [ 0, 31   ] (it4)
+   */
+
+   int itres0 = 0;
+   int itgi0  = 0;
+
+   int starty, sizey;
+
+   for(int stry=stridey; stry>0; stry--) 
+   {
+   	int throwaway = stridey-stry < throwawayy;
+	   if(throwaway) {
+		   starty = (stridey-stry+1) - throwawayy + stridey -1 ;
+		   sizey  = gih-1;
+    	}
+	   else 	{ 
+		   starty = (stridey-stry+1) - throwawayy -1 ;
+		   sizey  = gih;
+	   }
+
+	   itgi0 = (stry-1)*gs0;
+	
+	   int itres1 = itres0 + blockIdx.z*rs0;
+	   int itgi1  = itgi0  + blockIdx.z*gs1;
+	   int it2, it3, it4;
+	   for (it2=0; it2<sizey; it2++) { 
+		   int itres2 = itres1 + (starty + it2*stridey)*rs1;
+		   int itgi2  = itgi1 + it2*gs2;
+		   if(throwaway) {itgi2 += gs2;}
+			   int itres3 = itres2 + blockIdx.x*rs2;
+			   int itgi3  = itgi2 + (throwawayx+blockIdx.x)*gs3;
+            for(int it4=threadIdx.x; it4<ip; it4+=blockDim.x)
+            {
+               resptr[itres3+it4]= gradinptr[itgi3+it4];
+            }
+		} 
+	}
+}
+
+
+
+
+void copyKernelReverse(THCudaTensor* weight, THCudaTensor* revk, int stridey, int stridex, int kh, int kw)
+{
+   int ko = weight->size[1];
+   int ki = weight->size[3];
+   
+   int sh = weight->stride[0];
+   int so = weight->stride[1];
+   int sw = weight->stride[2];
+   int si = weight->stride[3];
+   
+   
+   
+   int kouth=(kh+stridey-1)/stridey;
+   int kouto=ki;
+   int koutw=(kw+stridex-1)/stridex;
+   int kouti=ko;
+
+   /* clean this after... */
+   int revkh=kouth;
+   int revkw=koutw;
+
+   THLongStorage *revksize = THLongStorage_newWithSize(6);
+   revksize->data[0]=stridey;
+   revksize->data[1]=stridex;
+   revksize->data[2]=kouth;
+   revksize->data[3]=kouto;
+   revksize->data[4]=koutw;
+   revksize->data[5]=kouti;
+
+   THCudaTensor_resize(revk, revksize, NULL);
+   THCudaTensor_fill(revk, 0);
+   
+   float* weightptr=THCudaTensor_data(weight);
+   float* revkptr=THCudaTensor_data(revk);
+   
+   dim3 kcrblocks(stridex, stridey, (ki+31)/32);
+   dim3 kcrthreads(32,32);
+   
+   
+   SCkernelCopyReverse <<<kcrblocks, kcrthreads>>>(weightptr, revkptr, stridey, stridex, kouth, 
+      koutw, kouto, kouti, sh, so, sw, si, kh, kw, ko, ki);
+   /*
+         blockIdx.z  =    [ 0, ceil(ki/32)] -> parallelizing over inputplanes dimension : 
+            usually there will be lots of them except in data layer where there is no backprop
+            inputplane = blockIdx.z * blockDim.x+threadIdx.x
+         blockIdx.y  =    [ 0, stry-1    ]
+         blockIdx.x  =    [ 0, strx-1    ]
+         threadIdx.x =    [ 0, 31        ] -> weight input dim
+         threadIdx.y =    [ 0, 31        ] -> weight output dim
+            outputplane= iterator * blockDim.y + threadIdx.y
+   */
+   
+   
+   /* end of copyKernelReverse */
+
+}
+
+
+
 
 
 
@@ -583,7 +690,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 
 	transposeWeightMatrix(tmpweight, weight);
 
-
+	printf("step 1 \n");
 
   int stridex = luaT_getfieldcheckint(L, 1, "dW");
   int stridey = luaT_getfieldcheckint(L, 1, "dH");
@@ -623,26 +730,26 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    /*copyKernelReverse*/
 
 
-   int ko = weight->size[1];
+/*   int ko = weight->size[1];
    int ki = weight->size[3];
    
    int sh = weight->stride[0];
    int so = weight->stride[1];
    int sw = weight->stride[2];
-   int si = weight->stride[3];
+   int si = weight->stride[3];*/
    
    
    
    int kouth=(kh+stridey-1)/stridey;
-   int kouto=ki;
+//   int kouto=ki;
    int koutw=(kw+stridex-1)/stridex;
-   int kouti=ko;
+//   int kouti=ko;
 
    /* clean this after... */
    int revkh=kouth;
    int revkw=koutw;
 
-   THLongStorage *revksize = THLongStorage_newWithSize(6);
+/*   THLongStorage *revksize = THLongStorage_newWithSize(6);
    revksize->data[0]=stridey;
    revksize->data[1]=stridex;
    revksize->data[2]=kouth;
@@ -673,11 +780,14 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
             outputplane= iterator * blockDim.y + threadIdx.y
    */
    
+	printf("step 2 \n");
    
    /* end of copyKernelReverse */
+	revk = THCudaTensor_new();
+   copyKernelReverse(weight, revk, stridey, stridex, kh, kw);
    
-   
-   
+ 	printf("step 3 \n");
+  
    /* create gradinput tensor :*/
    int giw = ( gow + revkw -1 ) * stridex;
    int gih = ( goh + revkh -1 ) ;
@@ -692,6 +802,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    THCudaTensor * gradin = THCudaTensor_newWithSize(gradinsize, NULL);
    THCudaTensor_fill(gradin, 0);
    
+	printf("step 4 \n");
    
    /* pad gradoutput tensor :*/
    int pgow = ( gow + revkw -1 );
@@ -709,6 +820,8 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 
    THCudaTensor * gradOutCopy = THCudaTensor_newWithSize(gradoutsize, NULL);
    THCudaTensor_fill(gradOutCopy, 0);
+
+	printf("step 5 \n");
 
    float* goptr=THCudaTensor_data(gradOutput);
    float* gocpyptr=THCudaTensor_data(gradOutCopy);
@@ -758,6 +871,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
   int gradOutstr3 = gradOutput->stride[3];
   
    
+	printf("step 6 \n");
    
    SCcopyGradOut <<< cgoblocks, cgothreads >>>(goptr, gocpyptr, goh, gow, pgoh, pgow, revkh, revkw, op, gradOutstr0, gradOutstr1, gradOutstr2, gradOutstr3);
 
@@ -774,6 +888,9 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
   cublasHandle_t handle;
   cublasStatus_t err = cublasCreate(&handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
+
+	printf("step 7 \n");
+
    
    /* GEMM calls : */
 	int nxs=1;
@@ -822,7 +939,8 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    
    
    
-   
+ 	printf("step 8 \n");
+  
    
    
    
@@ -854,8 +972,10 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    if (stridey==1 || stridey==throwawayy) { throwawayy=0 ; }
 
    /* clean this after */ 
-   int resw=iw;
-   int resh=ih;
+   //int resw=iw;
+   //int resh=ih;
+   int resw=padleft + iw + padright;
+   int resh=padtop + ih + padbottom;
 
   // will output a contiguous matrix, except if the tensor is of proper size, in which case output will be recycled
   // gradinput is zeroed by forward calls
@@ -874,6 +994,7 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
   }
    
 
+	printf("step 9 \n");
 
 
    float* gradinptr = THCudaTensor_data(gradin);
@@ -890,8 +1011,9 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
    int gs2 = gradin->stride[2];
    int gs3 = gradin->stride[3];
  
+	printf("step 10 \n");
 
-   SCcopyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw);
+   //SCcopyGradinResult <<<cgirblocks,cgirthreads>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw);
    /*
       blockIdx.z  = [ 0, bs-1 ] (it1)
       blockIdx.y  = [ 0 ] 
@@ -899,13 +1021,28 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
       threadIdx.x = [ 0, 31   ] (it4)
    */
 
-   
+   dim3 cgirblocks2(giw-throwawayx, 1, bs);
+   dim3 cgirthreads2(32);
+
+   SCcopyGradinResult2 <<<cgirblocks2,cgirthreads2>>> (gradinptr, resptr, throwawayx, throwawayy, stridey, rs0, rs1, rs2, gs0, gs1, gs2, gs3, ip, gih, padtop, padleft, ih, iw);
+	THCudaTensor_narrow(result, NULL, 1, padtop, ih);
+	THCudaTensor_narrow(result, NULL, 2, padleft, iw);
+	result=THCudaTensor_newContiguous(result);
+
+   cudaDeviceSynchronize();
+
+	printf("step 10.5 \n");
    
    THCudaTensor_free(gradin);
+	printf("step 10.6 \n");
+
    THCudaTensor_free(revk);
+	printf("step 10.7 \n");
+
    THCudaTensor_free(gradOutCopy);
    
    
+	printf("step 11 \n");
    
    
    
