@@ -317,7 +317,7 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
   cublasStatus_t err = cublasCreate(&handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
 
-   cudaStream_t* streams = (cudaStream_t*) malloc(nxs*sizeof(cudaStream_t));
+//   cudaStream_t* streams = (cudaStream_t*) malloc(nxs*sizeof(cudaStream_t));
 
 
 
@@ -325,8 +325,8 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
 	int hcall;
    for (hcall=0; hcall<nxs; hcall++) {
 
-		cudaStreamCreate(&streams[hcall]);
-		cublasSetStream(handle, streams[hcall]);
+/*		cudaStreamCreate(&streams[hcall]);
+		cublasSetStream(handle, streams[hcall]);*/
 
 	   int vcall;
       for (vcall=0; vcall<kh; vcall++) {
@@ -365,11 +365,11 @@ static int cunxn_SpatialConvolution_updateOutput(lua_State *L)
    }
 
 
-   for (hcall=0; hcall<nxs; hcall++) {
+/*   for (hcall=0; hcall<nxs; hcall++) {
 		cudaStreamDestroy(streams[hcall]);
 	}
 
-	free(streams);
+	free(streams);*/
 
   err = cublasDestroy(handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
@@ -741,14 +741,14 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 	   //printf("no overlap");
 	}
 
-   cudaStream_t* streams = (cudaStream_t*) malloc(nxs*stridex*stridey*sizeof(cudaStream_t));
+//   cudaStream_t* streams = (cudaStream_t*) malloc(nxs*stridex*stridey*sizeof(cudaStream_t));
 
 	for (int hcall=0; hcall<nxs; hcall++) {
 	   for (int stry=0; stry<stridey; stry++) {
 		   for (int strx=0; strx<stridex; strx++) {
-				int idx=hcall*stridex*stridey+stry*stridex+strx;
-				cudaStreamCreate(&streams[idx]);
-				cublasSetStream(handle, streams[idx]);
+//				int idx=hcall*stridex*stridey+stry*stridex+strx;
+//				cudaStreamCreate(&streams[idx]);
+//				cublasSetStream(handle, streams[idx]);
 
 
 			   for (int vcall=0; vcall<revkh; vcall++) {
@@ -783,11 +783,11 @@ static int cunxn_SpatialConvolution_updateGradInput(lua_State *L)
 	   }
    }
 
-   for (int idx=0; idx<nxs*stridex*stridey; idx++) {
-		cudaStreamDestroy(streams[idx]);
-	}
+//   for (int idx=0; idx<nxs*stridex*stridey; idx++) {
+//		cudaStreamDestroy(streams[idx]);
+//	}
 
-	free(streams);
+//	free(streams);
 
   err = cublasDestroy(handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
@@ -1063,17 +1063,17 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
   cublasStatus_t err = cublasCreate(&handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in creating handle"); }
 
-   cudaStream_t* streams = (cudaStream_t*) malloc(kh*sizeof(cudaStream_t));
-   for (int idx=0; idx<kh; idx++) {
-		cudaStreamCreate(&streams[idx]);
-	}
+//   cudaStream_t* streams = (cudaStream_t*) malloc(kh*sizeof(cudaStream_t));
+//   for (int idx=0; idx<kh; idx++) {
+//		cudaStreamCreate(&streams[idx]);
+//	}
 
    /* call GEMM */
 	int hcall;
    for (hcall=0; hcall<nxs; hcall++) {
 	   int vcall;
       for (vcall=0; vcall<kh; vcall++) {
-			cublasSetStream(handle, streams[vcall]);
+//			cublasSetStream(handle, streams[vcall]);
          int sq = vcall / stridey;
          int sr = vcall - sq * stridey;
          /* local icopy =  newSameTensor(input, stridey, bs, toh, tiw, ip) */
@@ -1114,11 +1114,11 @@ static int cunxn_SpatialConvolution_accGradParameters(lua_State *L)
       }
    }
 
-   for (int idx=0; idx<kh; idx++) {
-		cudaStreamDestroy(streams[idx]);
-	}
+//   for (int idx=0; idx<kh; idx++) {
+//		cudaStreamDestroy(streams[idx]);
+//	}
 
-	free(streams);
+//	free(streams);
 
   err = cublasDestroy(handle);
   if (err != CUBLAS_STATUS_SUCCESS) { printf("error in destroying handle"); }
