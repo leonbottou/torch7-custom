@@ -447,7 +447,7 @@ void copyBiasVector(THCudaTensor* output, THCudaTensor* bias)
 
 
 
-__global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, bool add, const int batchsize, const int batchstride)
+__global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, const int size1, const int size2, const int nOutputPlane, float scale, const int batchsize, const int batchstride)
 {
 	const int tid = blockDim.x*blockIdx.x + threadIdx.x;
 	const int tidx = threadIdx.x;
@@ -478,8 +478,7 @@ __global__ void computeGradBias32(float *ptrgradbias, float *ptrgradoutput, cons
 		for(i=0; i<32;i++){ gradbiasvalue+=values[i][tidx]; }
 
 		if (tid<nOutputPlane) {
-			if(add) { atomicAdd(&ptrgradbias[tid], gradbiasvalue); }
-			else { ptrgradbias[tid]=gradbiasvalue; }
+			atomicAdd(&ptrgradbias[tid], scale*gradbiasvalue);
 		}
 	}
 	
@@ -734,6 +733,7 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
   long zeroGradients = 0; //luaT_getfieldcheckint(L, 1, "zeroGradients");
+  float scale = luaL_optnumber(L, 4, 1);
 
 //  THCudaTensor *kernelSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
   // find the size of kernelslices
@@ -763,13 +763,9 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 
-  if (zeroGradients == 1) { 
-	THCudaTensor_addmm(gradWeight, 0, 1, gradOutput, kernelSlices); 
-	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 0, batchsize, batchstride);
-  } else {
-	THCudaTensor_addmm(gradWeight, 1, 1, gradOutput, kernelSlices); 
-	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, 1, batchsize, batchstride);
-  }  
+	THCudaTensor_addmm(gradWeight, 1, scale, gradOutput, kernelSlices); 
+	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, scale, batchsize, batchstride);
+
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 

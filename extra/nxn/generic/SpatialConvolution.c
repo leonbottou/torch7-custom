@@ -802,7 +802,7 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
             int it4;
             for (it4=0; it4<op; it4++) {
                ocpyptr[itocpy3]  = gradoutptr[itout3];
-               gradbiasptr[it4] += gradoutptr[itout3];
+               gradbiasptr[it4] += scale*gradoutptr[itout3];
                itout3++;
                itocpy3++;
 			   }
@@ -810,7 +810,7 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
 	   }
    }   
   
-  THTensor_(mul)(gradBias, gradBias, scale);
+//  THTensor_(mul)(gradBias, gradBias, scale);
   
   
 
