@@ -8,9 +8,9 @@
 
 /*
 
-This file contains 4 kernels :
-- copyPixelsInSlices and its more optimized version copyPixelsInSlicesReg (when there is an upper bound on the number of planes).
-- addPixelsInSlices and its optimized version addPixelsInSlicesReg.
+This file contains 2 kernels :
+- copyPixelsInSlices.
+- addPixelsInSlices.
 
 The primary kernel is copyPixelsInSlices : it unfolds a 3D matrix into a 2D matrix in a way that the 2D convolution (with many kernels) becomes a matrix multiplication.
 We call the resulting matrix "kernelSlices". Each row corresponds to a kW*kH*nInputPlane array.
@@ -40,13 +40,10 @@ In case the pixel (pixi,pixj) is in the zero-padding, we fill the slice with zer
 
 addPixelsInSlices is the same, except we read the contents of the array instead of writing.
 
-the *Reg versions just consist in preloading the pixel information before writing it.
-
-
 */
 
-__global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0)
+__global__ void copyPixelsInSlices(float *ptrinput0, float *ptrkslices0,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0, int batchsize)
 {
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
@@ -61,15 +58,22 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 	int i;
 	int j;
 	int k;
+	int b;
 
 	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
 	
-	ptrinput   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
 	int stridej = (kH*kW - dW) * nInputPlane;
 	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
 	
+	ptrkslices0	+=	((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	ptrinput0	+=	((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+
+	for (b=0; b<batchsize; b++) 
+	{
+		float * ptrinput    = ptrinput0 + inputstr0*b;
+		float * ptrkslices  = ptrkslices0 + kslicesstr0*b;
+
 		for(i=imin; i<imax+1; i++) {
 			for(j=jmin; j<jmax+1; j++) {
 				if(zeropad) 
@@ -87,57 +91,79 @@ __global__ void copyPixelsInSlices(float *ptrinput, float *ptrkslices,
 			}
 			ptrkslices += stridei;
 		}	
-
+	}
 }
 
 
-/*__global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown)
+__global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0, int batchsize)
 {
+	// each block does one pixel of the input image
+	// each kernel slice is represented by its upper-left coordinates
+
 	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
+	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
 	const int tidx=threadIdx.x;
 
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+	int i,j,b;
 
-	int i;
-	int j;
-	int k;
+	if(pixj > isize2 + padleft + padright -1) return;
 
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrgradinput += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices   += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	// step 1 : find which kernel slices contain the values of the pixel
+        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
 
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+	// step 2 : move the pointers
+	// this one goes to where the pixel is at
+	ptrinput0   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	ptrkslices0 += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
-	for(k=0; k<valuesperthread; k++) {
-		ptrgradinput[k*blk+tidx] = 0;
-	}
-	
-	if(tidx<nInputPlane) {
-		if(!zeropad) {
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
-						for(k=0; k<valuesperthread; k++) {
-							ptrgradinput[k*blk+tidx] += ptrkslices[k*blk+tidx];
-						}
-					ptrkslices += stridej;
-				}
-				ptrkslices += stridei;
-			}	
+	const int stridej = (kH*kW - dW) * nInputPlane;
+	const int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
+
+	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+
+
+	// read pixel
+	// load the stuff first...
+	for (b=0; b<batchsize; b++) 
+	{
+		float * ptrinput    = ptrinput0 + inputstr0*b;
+		float * ptrkslices  = ptrkslices0 + kslicesstr0*b;
+
+		float pixvalue;
+		if (zeropad) 	{
+			pixvalue=0;
 		}
+		else	{
+			pixvalue=ptrinput[tidx];
+		}
+
+
+	//	write to memory
+		for(i=imin; i<imax+1; i++) {
+			for(j=jmin; j<jmax+1; j++) {
+				if(zeropad) 
+				{
+					ptrkslices[tidx]=0;
+				}
+				else {
+					ptrkslices[tidx]=pixvalue;
+				}
+				ptrkslices += stridej;
+			}
+			ptrkslices += stridei;
+		}	
 	}
-}*/
+}
 
 
-__global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int gradinputstr0, int kslicesstr0)
+
+
+__global__ void addPixelsInSlices(float *ptrgradinput0, float *ptrkslices0,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int gradinputstr0, int kslicesstr0, int batchsize)
 {
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
@@ -152,14 +178,20 @@ __global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
 	int i;
 	int j;
 	int k;
+	int b;
 
 	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
 	
-	ptrgradinput += gradinputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	ptrgradinput0 += gradinputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	ptrkslices0 += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+	const int stridej = (kH*kW - dW) * nInputPlane;
+	const int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+
+	for (b=0; b<batchsize; b++) 
+	{
+		float * ptrgradinput    = ptrgradinput0 + gradinputstr0*b;
+		float * ptrkslices  		= ptrkslices0 + kslicesstr0*b;
 	
 		for(i=imin; i<imax+1; i++) {
 			for(j=jmin; j<jmax+1; j++) {
@@ -176,14 +208,14 @@ __global__ void addPixelsInSlices(float *ptrgradinput, float *ptrkslices,
 			}
 			ptrkslices += stridei;
 		}	
-
+	}
 }
 
 
 
 
-template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int gradinputstr0, int kslicesstr0)
+template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput0, float *ptrkslices0,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int gradinputstr0, int kslicesstr0, int batchsize)
 {
 	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y;
@@ -195,27 +227,32 @@ template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradi
         int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
         int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
 
-	int i;
-	int j;
-	int k;
+	int i,j,k,b;
 
 	float gradvalues[maxnumplanes/32];
-		for(k=0; k<maxnumplanes/32; k++) {
-			gradvalues[k]=0;
-		}
 
 	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
 	
-	ptrgradinput += gradinputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	ptrgradinput0 += ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	ptrkslices0 += ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
 
 	int stridej = (kH*kW - dW) * nInputPlane;
 	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
+
+	for (b=0; b<batchsize; b++) 
+	{
+		float * ptrgradinput    = ptrgradinput0 + gradinputstr0*b;
+		float * ptrkslices  		= ptrkslices0 + kslicesstr0*b;
+
+		for(k=0; k<maxnumplanes/32; k++) {
+			gradvalues[k]=0;
+		}
 	
-	if(!zeropad) 
-		{
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
+	
+		if(!zeropad) 
+			{
+				for(i=imin; i<imax+1; i++) {
+					for(j=jmin; j<jmax+1; j++) {
 					
 	/*					for(k=threadIdx.x; k<nInputPlane; k+=blockDim.x) {
 							ptrgradinput[k] += ptrkslices[k];
@@ -232,178 +269,10 @@ template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradi
 				ptrgradinput[k*blockDim.x+threadIdx.x] = gradvalues[k];
 			}
 		}
-
+	}
 
 }
 
-
-/*template <int maxnumplanes> __global__ void addPixelsInSlicesReg(float *ptrgradinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown, int gradinputstr0, int kslicesstr0)
-{
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	int i;
-	int j;
-	int k;
-
-	float gradvalues[maxnumplanes/32];
-		for(k=0; k<valuesperthread; k++) {
-			gradvalues[k]=0;
-		}
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrgradinput += gradinputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices   += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-
-	if(tidx<nInputPlane) {
-		if(!zeropad) {
-			for(i=imin; i<imax+1; i++) {
-				for(j=jmin; j<jmax+1; j++) {
-					for(k=0; k<valuesperthread; k++) {
-						gradvalues[k] += ptrkslices[k*blk+tidx];
-					}
-				ptrkslices += stridej;
-				}
-				ptrkslices += stridei;
-			}	
-			for(k=0; k<valuesperthread; k++) {
-				ptrgradinput[k*blk+tidx] = gradvalues[k];
-			}
-		}
-	}
-}
-*/
-
-
-
-template <int maxnumplanes> __global__ void copyPixelsInSlicesReg(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int valuesperthread, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0)
-{
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y;
-	const int blk =blockDim.x;
-	const int tidx=threadIdx.x;
-
-        int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	int i;
-	int j;
-	int k;
-
-	bool zeropad=pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	
-	ptrinput   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	float pixvalues[maxnumplanes/32];
-	if(tidx<nInputPlane) {
-		if (zeropad) 
-		{
-			for(k=threadIdx.x; k<nInputPlane; k+=blockDim.x) {
-				pixvalues[k]=0;
-			}
-		}
-		else
-		{
-			for(k=threadIdx.x; k<nInputPlane; k+=blockDim.x) {
-				pixvalues[k]=ptrinput[k];
-			}
-		}
-	}
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (((size2-jmax+jmin-1)*kH -dH)*kW  + (jmax-jmin+1)*dW)*nInputPlane;
-	
-		for(i=imin; i<imax+1; i++) {
-			for(j=jmin; j<jmax+1; j++) {
-				if(zeropad) 
-				{
-					for(k=threadIdx.x; k<nInputPlane; k+=blockDim.x) {
-						ptrkslices[k]=0;
-					}
-				}
-				else {
-					for(k=threadIdx.x; k<nInputPlane; k+=blockDim.x) {
-						ptrkslices[k]=pixvalues[k];
-					}
-				}
-				ptrkslices += stridej;
-			}
-			ptrkslices += stridei;
-		}	
-
-}
-
-
-__global__ void copyPixelsInSlicesRGB(float *ptrinput, float *ptrkslices,
-	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0)
-{
-	// each block does one pixel of the input image
-	// each kernel slice is represented by its upper-left coordinates
-
-	const int pixi=blockIdx.x;
-	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
-	const int tidx=threadIdx.x;
-
-	int i,j;
-
-	if(pixj > isize2 + padleft + padright -1) return;
-
-	// step 1 : find which kernel slices contain the values of the pixel
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
-
-	// step 2 : move the pointers
-	// this one goes to where the pixel is at
-	ptrinput   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
-
-	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
-	// read pixel
-	// load the stuff first...
-	float pixvalue;
-	if (zeropad) 	{
-		pixvalue=0;
-	}
-	else	{
-		pixvalue=ptrinput[tidx];
-	}
-
-	int stridej = (kH*kW - dW) * nInputPlane;
-	int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
-
-//	write to memory
-	for(i=imin; i<imax+1; i++) {
-		for(j=jmin; j<jmax+1; j++) {
-			if(zeropad) 
-			{
-				ptrkslices[tidx]=0;
-			}
-			else {
-				ptrkslices[tidx]=pixvalue;
-			}
-			ptrkslices += stridej;
-		}
-		ptrkslices += stridei;
-	}	
-}
 
 
 
@@ -505,47 +374,23 @@ void sliceInput(THCudaTensor *input, THCudaTensor* kernelSlices, int kH, int kW,
 
 
   // cuda blocks & threads:
-  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright, batchsize);
-  dim3 threads (32);
 
 	  //with an upper bound on the number of planes, we can be more efficient
 	  //kernel unfold inputs
-	  if (nInputPlane >1024) {
-	  copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >512) {
-		copyPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >384) {
-		copyPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >256) {
-		copyPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >128) {
-		copyPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >32) {
-		copyPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane ==3) {
-		  dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10, batchsize);
-		  dim3 threadsRGB (3,10);
+	if (nInputPlane ==3) 
+	{
+		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10);
+		dim3 threadsRGB (3,10);
 		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-	  else {
-		copyPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrinput, ptrkslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, 0, padleft, padright, padup, paddown, inputstr0, kslicesstr0);
-	  }
-
-  //THCudaTensor_free(input); 
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
+	}
+	else 
+	{
+		dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
+		dim3 threads (32);
+		copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
+	}
 
 
 }
@@ -563,43 +408,14 @@ void unsliceGradient(THCudaTensor *backwardSlices, THCudaTensor *gradInput, THCu
   float* ptrbackslices = THCudaTensor_data(backwardSlices);
   float* ptrgradinput  = THCudaTensor_data(gradInput);
 
-  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright, batchsize);
+  dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright);
   dim3 threads (32);
 
 	int gradinputstr0=gradInput->stride[0];
 	int kslicesstr0=size1*size2*kW*kH*nInputPlane;
 
-  // this is for the specific case of the inputs with less than 32 channels
-  // for some reason i thought it would be cool to be able to backprop through it
-
-	  if (nInputPlane >1024) {
-	  addPixelsInSlices<<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  }
-	  else if (nInputPlane >512)  {
-	  addPixelsInSlicesReg <1024> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
-	  else if (nInputPlane >384)  {
-	  addPixelsInSlicesReg <512> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
-	  else if (nInputPlane >256)  {
-	  addPixelsInSlicesReg <384> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
-	  else if (nInputPlane >128)  {
-	  addPixelsInSlicesReg <256> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
-	  else if (nInputPlane >32)  {
-	  addPixelsInSlicesReg <128> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
-	  else {
-	  addPixelsInSlicesReg <32> <<<blocks, threads>>>(ptrgradinput, ptrbackslices,
-		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0);
-	  } 
+   addPixelsInSlices<<<blocks, threads>>>(ptrgradinput, ptrbackslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, gradinputstr0, kslicesstr0, batchsize);
 
 }
 
