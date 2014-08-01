@@ -74,6 +74,7 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self:reset()
    
    self.mode='conv' -- can be : 'conv', 'trivial', 'fc'
+	self.allowUnfold=false
    self.learningRate=0
    self.momentum=1 -- so accGradParameters actually adds up to the gradient tensors
    self.weightDecay=0
@@ -214,7 +215,11 @@ function SpatialConvolution:updateOutputFC(input)
 end
 
 function SpatialConvolution:updateOutputConv(input)
-   input.nxn.SpatialConvolution_updateOutput(self, input)
+	if self.allowUnfold then 
+		input.nxn.SpatialConvolutionUnfold_updateOutput(self, input)
+	else
+	   input.nxn.SpatialConvolution_updateOutput(self, input)
+	end
 --   print('updateOutputConv')
 end
 
@@ -289,7 +294,11 @@ function SpatialConvolution:updateGradInputFC(input, gradOutput)
 end
 
 function SpatialConvolution:updateGradInputConv(input, gradOutput)
-   input.nxn.SpatialConvolution_updateGradInput(self, input, gradOutput)
+	if self.allowUnfold then 
+		input.nxn.SpatialConvolutionUnfold_updateGradInput(self, input, gradOutput)
+	else
+   	input.nxn.SpatialConvolution_updateGradInput(self, input, gradOutput)
+	end
 end
 
 function SpatialConvolution:updateGradInput(input, gradOutput)
@@ -350,7 +359,11 @@ function SpatialConvolution:accGradParametersFC(input, gradOutput, scale)
 end
 
 function SpatialConvolution:accGradParametersConv(input, gradOutput, scale)
-   input.nxn.SpatialConvolution_accGradParameters(self, input, gradOutput, scale) 
+	if self.allowUnfold then 
+		input.nxn.SpatialConvolutionUnfold_accGradParameters(self, input, gradOutput, scale) 
+	else
+   	input.nxn.SpatialConvolution_accGradParameters(self, input, gradOutput, scale) 
+	end
 end
 
 function SpatialConvolution:accGradParameters(input, gradOutput, scale)

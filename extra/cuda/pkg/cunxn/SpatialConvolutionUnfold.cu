@@ -612,13 +612,13 @@ static int cunxn_SpatialConvolutionUnfold_updateOutput(lua_State *L)
   THCudaTensor *output = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "output", "torch.CudaTensor");
   THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *bias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "bias", "torch.CudaTensor");
-  THCudaTensor *kSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
+//  THCudaTensor *kSlices = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "kernelSlices", "torch.CudaTensor");
   long kW = luaT_getfieldcheckint(L, 1, "kW");
   long kH = luaT_getfieldcheckint(L, 1, "kH");
   long dW = luaT_getfieldcheckint(L, 1, "dW");
   long dH = luaT_getfieldcheckint(L, 1, "dH");
-  long padup = luaT_getfieldcheckint(L, 1, "padup");
-  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
+  long padup = luaT_getfieldcheckint(L, 1, "padtop");
+  long paddown = luaT_getfieldcheckint(L, 1, "padbottom");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
@@ -678,8 +678,8 @@ static int cunxn_SpatialConvolutionUnfold_updateGradInput(lua_State *L)
   long kH = luaT_getfieldcheckint(L, 1, "kH");
   long dW = luaT_getfieldcheckint(L, 1, "dW");
   long dH = luaT_getfieldcheckint(L, 1, "dH");
-  long padup = luaT_getfieldcheckint(L, 1, "padup");
-  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
+  long padup = luaT_getfieldcheckint(L, 1, "padtop");
+  long paddown = luaT_getfieldcheckint(L, 1, "padbottom");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
@@ -726,8 +726,8 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   long kH = luaT_getfieldcheckint(L, 1, "kH");
   long dW = luaT_getfieldcheckint(L, 1, "dW");
   long dH = luaT_getfieldcheckint(L, 1, "dH");
-  long padup = luaT_getfieldcheckint(L, 1, "padup");
-  long paddown = luaT_getfieldcheckint(L, 1, "paddown");
+  long padup = luaT_getfieldcheckint(L, 1, "padtop");
+  long paddown = luaT_getfieldcheckint(L, 1, "padbottom");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
@@ -769,9 +769,7 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 
-	printf("resizing gradWeight back");
   THCudaTensor_resize4d(gradWeight, nOutputPlane, kH, kW, nInputPlane);
-	printf("done resizing");
 
 // we resize gradOutput back to what it was...
   THCudaTensor_resize4d(gradOutput, batchsize, size1, size2, nOutputPlane);

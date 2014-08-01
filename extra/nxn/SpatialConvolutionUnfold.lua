@@ -14,8 +14,8 @@ function SpatialConvolutionUnfold:__init(nInputPlane, nOutputPlane, kW, kH, dW, 
    self.dH = dH
    self.padleft = padleft or 0
    self.padright = padright or 0
-   self.padup = padup or 0
-   self.paddown = paddown or 0
+   self.padtop = padup or 0
+   self.padbottom = paddown or 0
    self.kernelSlices = torch.Tensor()
    self.backwardSlices = torch.Tensor()
 
