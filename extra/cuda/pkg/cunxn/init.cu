@@ -12,6 +12,7 @@
 #include "ReLU.cu"
 #include "CrossMapNormalization.cu"
 #include "SpatialConvolution.cu"
+#include "SpatialConvolutionUnfold.cu"
 #include "SpatialMaxPooling.cu"
 #include "SpatialGlobalMaxPooling.cu"
 #include "Dropmap.cu"
@@ -30,6 +31,7 @@ int luaopen_libcunxn(lua_State *L)
 
   cunxn_CrossMapNormalization_init(L);
   cunxn_SpatialConvolution_init(L);
+  cunxn_SpatialConvolutionUnfold_init(L);
   cunxn_SpatialMaxPooling_init(L);
   cunxn_SpatialGlobalMaxPooling_init(L);
   cunxn_testSgemm_init(L);

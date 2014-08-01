@@ -5,6 +5,7 @@ include('Module.lua')
 include('Sequential.lua')
 include('Column.lua')
 include('SpatialConvolution.lua')
+include('SpatialConvolutionUnfold.lua')
 include('Copy.lua')
 include('Reshape.lua')
 

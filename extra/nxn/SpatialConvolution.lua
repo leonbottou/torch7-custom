@@ -75,7 +75,7 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    
    self.mode='conv' -- can be : 'conv', 'trivial', 'fc'
    self.learningRate=0
-   self.momentum=0
+   self.momentum=1 -- so accGradParameters actually adds up to the gradient tensors
    self.weightDecay=0
    self.gpucompatible = true
 end
