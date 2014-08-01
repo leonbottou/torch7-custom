@@ -622,7 +622,6 @@ static int cunxn_SpatialConvolutionUnfold_updateOutput(lua_State *L)
   long paddown = luaT_getfieldcheckint(L, 1, "paddown");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
-  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
 
@@ -684,7 +683,6 @@ static int cunxn_SpatialConvolutionUnfold_updateGradInput(lua_State *L)
   long paddown = luaT_getfieldcheckint(L, 1, "paddown");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
-  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
 
@@ -733,7 +731,6 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   long paddown = luaT_getfieldcheckint(L, 1, "paddown");
   long padleft = luaT_getfieldcheckint(L, 1, "padleft");
   long padright = luaT_getfieldcheckint(L, 1, "padright");
-//  long shdmem = luaT_getfieldcheckint(L, 1, "shdmem");
   long nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
   long nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
   long zeroGradients = 0; //luaT_getfieldcheckint(L, 1, "zeroGradients");

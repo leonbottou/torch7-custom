@@ -1,6 +1,6 @@
 local SpatialConvolutionUnfold, parent = torch.class('nxn.SpatialConvolutionUnfold', 'nxn.Module')
 
-function SpatialConvolutionUnfold:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, shdmem, padleft, padright, padup, paddown)
+function SpatialConvolutionUnfold:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, padleft, padright, padup, paddown)
    parent.__init(self)
 
    dW = dW or 1
@@ -16,7 +16,6 @@ function SpatialConvolutionUnfold:__init(nInputPlane, nOutputPlane, kW, kH, dW, 
    self.padright = padright or 0
    self.padup = padup or 0
    self.paddown = paddown or 0
-   self.shdmem = shdmem or 1
    self.kernelSlices = torch.Tensor()
    self.backwardSlices = torch.Tensor()
 

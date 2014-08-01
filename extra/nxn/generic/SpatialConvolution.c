@@ -233,6 +233,7 @@ int it1;
 
   THTensor_(free)(icopy);
   THTensor_(free)(ocopy);
+  THTensor_(free)(weight);
 
   /* luaL_error(L, "not implemented"); */
   return 0;
@@ -588,6 +589,7 @@ THTensor_(resizeAs)(gradInput, input);
   THTensor_(free)(gradin);
   THTensor_(free)(result);
   THTensor_(free)(gradOutCopy);
+  THTensor_(free)(weight);
 
 
    
@@ -853,6 +855,7 @@ static int nxn_(SpatialConvolution_accGradParameters)(lua_State *L)
 
   THTensor_(free)(icopy);
   THTensor_(free)(ocopy);
+  THTensor_(free)(gradWeight);
 
   /* luaL_error(L, "not implemented"); */
   return 0;
