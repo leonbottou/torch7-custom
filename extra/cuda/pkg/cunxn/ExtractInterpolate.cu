@@ -116,8 +116,6 @@ static int cunxn_ExtractInterpolate_updateOutput(lua_State *L)
   float * tmpptr=THCudaTensor_data(tmp);
   float * outptr=THCudaTensor_data(output);
   
-  cudaMemcpy2D(tmpptr, 4*sizeof(float), inputptr, 3*sizeof(float), 3*sizeof(float), bs*ih*iw ,cudaMemcpyDeviceToDevice);
-
    result = cudaMemcpy2D(tmpptr, 4*sizeof(float), inputptr, 3*sizeof(float), 3*sizeof(float), bs*ih*iw ,cudaMemcpyDeviceToDevice);
 	if (result != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy2D -  %s\n", cudaGetErrorString(result));
