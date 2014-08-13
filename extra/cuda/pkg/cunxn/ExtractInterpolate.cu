@@ -73,7 +73,7 @@ __global__ void extractInterpolateKernel(float* outptr, int outstr0, int outstr1
 static int cunxn_ExtractInterpolate_updateOutput(lua_State *L)
 {
   THCudaTensor *input = (THCudaTensor *)luaT_checkudata(L, 2, "torch.CudaTensor");
-  THCudaTensor *tmp = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "tmp", "torch.CudaTensor");
+  //THCudaTensor *tmp = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "tmp", "torch.CudaTensor");
   THCudaTensor *output = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "output", "torch.CudaTensor");
   int outy = luaT_getfieldcheckint(L, 1, "targety");
   int outx = luaT_getfieldcheckint(L, 1, "targetx");
@@ -107,8 +107,8 @@ static int cunxn_ExtractInterpolate_updateOutput(lua_State *L)
   
   
   cudaError_t result;
-
-  THCudaTensor_resize4d(tmp, bs, ih, iw, 4);  
+  THCudaTensor *tmp = THCudaTensor_newWithSize4d(bs, ih, iw, 4);
+  //THCudaTensor_resize4d(tmp, bs, ih, iw, 4);  
   THCudaTensor_fill(tmp, 0);  
   THCudaTensor_resize4d(output, bs,  outy, outx, 3);  
   THCudaTensor_fill(output, 0);  
@@ -207,7 +207,7 @@ static int cunxn_ExtractInterpolate_updateOutput(lua_State *L)
  
   // final cut:
   THCudaTensor_free(input); 
-  //THCudaTensor_free(tmp); 
+  THCudaTensor_free(tmp); 
   //THCudaTensor_select(output, NULL, dimension, 0);
 
   return 1;
