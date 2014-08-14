@@ -192,33 +192,66 @@ __global__ void copyPixelsInSlices(float *ptrinput0, float *ptrkslices0,
 	//}
 }*/
 
-
-
 __global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
 	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0, int batchsize)
 {
-	// each block [3,32] does 32 pixels of one row over x
+	// each block does one pixel of the input image
 	// each kernel slice is represented by its upper-left coordinates
-   // pixi => y, pixj => x 
 
-	const int pixi=threadIdx.y;
+	const int pixi=blockIdx.x;
 	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
 	const int tidx=threadIdx.x;
+	const int batchindex=blockIdx.z*blockDim.z+threadIdx.z;
 
 	int i,j,b;
 
-	if(pixj > isize2 + padleft + padright -1) return;
+	int imin, jmin, imax, jmax;
+	int inputoffset, ksliceoffset;
 
 	// step 1 : find which kernel slices contain the values of the pixel
-        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
-        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
-        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
-        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+	__shared__ int _imin, _jmin[32], _imax, _jmax[32], _inputoffset[32][3], _ksliceoffset[32][3]; 
+	if(threadIdx.z==0)
+	{
+	   imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+	   jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+	   imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+	   jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+		if(threadIdx.x==0 && threadIdx.y==0)
+		{
+			_imin=imin;
+			_imax=imax;
+		}
+		if(threadIdx.x==0)
+		{
+			_jmin[threadIdx.y]=jmin;
+			_jmax[threadIdx.y]=jmax;
+		}
+		inputoffset = inputstr0*blockIdx.z*blockDim.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+		ksliceoffset= kslicesstr0*blockIdx.z*blockDim.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+		_inputoffset[threadIdx.y][threadIdx.x]=inputoffset;
+		_ksliceoffset[threadIdx.y][threadIdx.x]=ksliceoffset;
+	}
+
+	__syncthreads();
+
+	if(batchindex >= batchsize) return;
+	if(pixj > isize2 + padleft + padright -1) return;
+
+
+	if(threadIdx.z>0)
+	{
+		imin=_imin;
+		imax=_imax;
+		jmin=_jmin[threadIdx.y];
+		jmax=_jmax[threadIdx.y];
+		inputoffset=_inputoffset[threadIdx.y][threadIdx.x];
+		ksliceoffset=_ksliceoffset[threadIdx.y][threadIdx.x];
+	}
 
 	// step 2 : move the pointers
 	// this one goes to where the pixel is at
-	ptrinput0   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
-	ptrkslices0 += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+	ptrinput0   += inputoffset+inputstr0*threadIdx.z ;
+	ptrkslices0 += ksliceoffset+kslicesstr0*threadIdx.z ;
 
 	const int stridej = (kH*kW - dW) * nInputPlane;
 	const int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
@@ -258,6 +291,7 @@ __global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
 		}	
 	//}
 }
+
 
 
 
@@ -442,15 +476,17 @@ void sliceInput(THCudaTensor *input, THCudaTensor* kernelSlices, int kH, int kW,
 
 
   //kernel unfold inputs
-/*	if (nInputPlane ==3) 
+	if (nInputPlane ==3) 
 	{
-		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10, batchsize);
-		dim3 threadsRGB (3,10);
+//		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10, batchsize);
+//		dim3 threadsRGB (3,10);
+		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+31)/32, (batchsize+3)/4);
+		dim3 threadsRGB (3,32,4);
 		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
 	}
 	else 
-	{*/
+	{
 		int b_y;
 		if (nInputPlane>1024) 
 		{
@@ -464,7 +500,7 @@ void sliceInput(THCudaTensor *input, THCudaTensor* kernelSlices, int kH, int kW,
 		dim3 threads (32,b_y);
 		copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
-//	}
+	}
 
 
 }
