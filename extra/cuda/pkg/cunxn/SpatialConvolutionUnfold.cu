@@ -128,7 +128,7 @@ __global__ void copyPixelsInSlices(float *ptrinput0, float *ptrkslices0,
 }
 
 
-__global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
+/*__global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
 	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0, int batchsize)
 {
 	// each block does one pixel of the input image
@@ -161,10 +161,10 @@ __global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
 
 	// read pixel
 	// load the stuff first...
-	for (b=0; b<batchsize; b++) 
-	{
-		float * ptrinput    = ptrinput0 + inputstr0*b;
-		float * ptrkslices  = ptrkslices0 + kslicesstr0*b;
+	//for (b=0; b<batchsize; b++) 
+	//{
+		float * ptrinput    = ptrinput0;
+		float * ptrkslices  = ptrkslices0;
 
 		float pixvalue;
 		if (zeropad) 	{
@@ -189,7 +189,74 @@ __global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
 			}
 			ptrkslices += stridei;
 		}	
-	}
+	//}
+}*/
+
+
+
+__global__ void copyPixelsInSlicesRGB(float *ptrinput0, float *ptrkslices0,
+	int dH, int dW, int kH, int kW, int size1, int size2, int isize1, int isize2, int nInputPlane, int padleft, int padright, int padup, int paddown, int inputstr0, int kslicesstr0, int batchsize)
+{
+	// each block [3,32] does 32 pixels of one row over x
+	// each kernel slice is represented by its upper-left coordinates
+   // pixi => y, pixj => x 
+
+	const int pixi=threadIdx.y;
+	const int pixj=blockIdx.y*blockDim.y + threadIdx.y;
+	const int tidx=threadIdx.x;
+
+	int i,j,b;
+
+	if(pixj > isize2 + padleft + padright -1) return;
+
+	// step 1 : find which kernel slices contain the values of the pixel
+        const int imin=(pixi - (kH - 1) + (dH -1))/dH > 0 ? (pixi - (kH - 1) + (dH -1))/dH : 0 ;
+        const int jmin=(pixj - (kW - 1) + (dW -1))/dW > 0 ? (pixj - (kW - 1) + (dW -1))/dW : 0 ;
+        const int imax= pixi / dH < size1 ? pixi / dH : size1 - 1 ;
+        const int jmax= pixj / dW < size2 ? pixj / dW : size2 - 1 ;
+
+	// step 2 : move the pointers
+	// this one goes to where the pixel is at
+	ptrinput0   += inputstr0*blockIdx.z + ((pixi-padup) * isize2 + (pixj-padleft)) * nInputPlane ;
+	ptrkslices0 += kslicesstr0*blockIdx.z + ((imin * size2  + jmin) * kH * kW +  (pixi - imin * dH) * kW + (pixj - jmin*dW) ) * nInputPlane;
+
+	const int stridej = (kH*kW - dW) * nInputPlane;
+	const int stridei = (size2*kH-dH) * kW *nInputPlane - (jmax-jmin+1) * stridej ;
+
+	bool zeropad = pixi<padup || pixi>isize1-1+padup || pixj<padleft || pixj>isize2-1+padleft ;
+
+
+	// read pixel
+	// load the stuff first...
+	//for (b=0; b<batchsize; b++) 
+	//{
+		float * ptrinput    = ptrinput0;
+		float * ptrkslices  = ptrkslices0;
+
+		float pixvalue;
+		if (zeropad) 	{
+			pixvalue=0;
+		}
+		else	{
+			pixvalue=ptrinput[tidx];
+		}
+
+
+	//	write to memory
+		for(i=imin; i<imax+1; i++) {
+			for(j=jmin; j<jmax+1; j++) {
+				if(zeropad) 
+				{
+					ptrkslices[tidx]=0;
+				}
+				else {
+					ptrkslices[tidx]=pixvalue;
+				}
+				ptrkslices += stridej;
+			}
+			ptrkslices += stridei;
+		}	
+	//}
 }
 
 
@@ -377,7 +444,54 @@ void sliceInput(THCudaTensor *input, THCudaTensor* kernelSlices, int kH, int kW,
   //kernel unfold inputs
 	if (nInputPlane ==3) 
 	{
-		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10);
+		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10, batchsize);
+		dim3 threadsRGB (3,10);
+		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
+	}
+	else 
+	{
+		int b_y;
+		if (nInputPlane>1024) 
+		{
+			b_y=32;
+		}
+		else
+		{
+			b_y=(nInputPlane+31)/32;
+		}
+		dim3 blocks (isize1 + padup + paddown, isize2 + padleft + padright, batchsize);
+		dim3 threads (32,b_y);
+		copyPixelsInSlices<<<blocks, threads>>>(ptrinput, ptrkslices,
+		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
+	}
+
+
+}
+
+
+void sliceInputSplit(THCudaTensor *input, THCudaTensor* kernelSlices, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright, int numsplits=1, int splitid=0)
+{
+  // find the size of kernelslices
+  long batchsize = input->size[0]/numsplits;
+  long isize1 = input->size[1];
+  long isize2 = input->size[2];
+  long nInputPlane = input->size[3];
+  long size1 = (isize1 - kH + padup + paddown) / dH + 1;
+  long size2 = (isize2 - kW + padleft + padright) / dW + 1;
+
+	int inputstr0=input->stride[0];
+	int kslicesstr0=size1*size2*kW*kH*nInputPlane;
+
+  float* ptrkslices = THCudaTensor_data(kernelSlices);
+  float* ptrinput   = THCudaTensor_data(input)+splitid*inputstr0*batchsize;
+
+
+
+  //kernel unfold inputs
+	if (nInputPlane ==3) 
+	{
+		dim3 blocksRGB (isize1 + padup + paddown, (isize2 + padleft + padright+9)/10, batchsize);
 		dim3 threadsRGB (3,10);
 		copyPixelsInSlicesRGB <<<blocksRGB, threadsRGB>>>(ptrinput, ptrkslices,
 		dH, dW, kH, kW, size1, size2, isize1, isize2, nInputPlane, padleft, padright, padup, paddown, inputstr0, kslicesstr0, batchsize);
@@ -467,25 +581,44 @@ static int cunxn_SpatialConvolutionUnfold_updateOutput(lua_State *L)
   long size1 = (isize1 - kH + padup + paddown) / dH + 1;
   long size2 = (isize2 - kW + padleft + padright) / dW + 1;
 
-  THCudaTensor* kernelSlices = THCudaTensor_newWithSize2d(batchsize*size1*size2,kW*kH*nInputPlane);
-  sliceInput(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright);
   THCudaTensor_resize4d(output, batchsize, size1, size2, nOutputPlane);
-
-	copyBiasVector(output, bias);
+  copyBiasVector(output, bias);
 
   // unfold conv kernels by resizing
   THCudaTensor_resize2d(kernels, nOutputPlane, kW*kH*nInputPlane);
   THCudaTensor_transpose(kernels, NULL, 0, 1);
 
-  // put output in matrix mode
-  THCudaTensor_resize2d(output, batchsize* size1* size2, nOutputPlane);
+  size_t freeMem;
+  THCudaCheck(cudaMemGetInfo (&freeMem, NULL));
 
-//  printf("sgemm\n");
-  THCudaTensor_addmm(output, 1,1, kernelSlices, kernels);
+  int nsplits=1;
+
+  while(batchsize/nsplits*size1*size2*kW*kH*nInputPlane * 4 > freeMem) 
+  {
+		nsplits *= 2;
+  }
+
+  int newbatchsize=batchsize/nsplits;
+
+  THCudaTensor* kernelSlices = THCudaTensor_newWithSize2d(newbatchsize*size1*size2,kW*kH*nInputPlane);
+
+	for(int split=0; split<nsplits; split++)
+	{
+      sliceInputSplit(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright, nsplits, split);
+      THCudaTensor* outputsplit = THCudaTensor_newNarrow(output, 0, split*newbatchsize, newbatchsize);
+ 	   // put output in matrix mode
+   	THCudaTensor_resize2d(outputsplit, newbatchsize* size1* size2, nOutputPlane);
+		//  printf("sgemm\n");
+  		THCudaTensor_addmm(outputsplit, 1,1, kernelSlices, kernels);
+
+	}
+
+
+
 
   THCudaTensor_free(kernelSlices); 
   THCudaTensor_transpose(kernels, NULL, 0, 1);
-
+//  THCudaTensor_resize4d(kernels, nOutputPlane, kH, kW, nInputPlane);
 
   // check for errors
   cudaError_t err = cudaGetLastError();
@@ -530,19 +663,31 @@ static int cunxn_SpatialConvolutionUnfold_updateGradInput(lua_State *L)
    THCudaTensor_resizeAs(gradInput, input);
 	THCudaTensor_fill(gradInput, 0);
 
-  THCudaTensor_resize2d(gradOutput, batchsize*size1* size2, nOutputPlane);
+  size_t freeMem;
+  THCudaCheck(cudaMemGetInfo (&freeMem, NULL));
+  int nsplits=1;
+  while(batchsize/nsplits*size1*size2*kW*kH*nInputPlane * 4 > freeMem) 
+  {
+		nsplits *= 2;
+  }
+  int newbatchsize=batchsize/nsplits;
+	THCudaTensor* backwardSlices = THCudaTensor_newWithSize2d(newbatchsize*size1*size2,kW*kH*nInputPlane);
 
-	THCudaTensor* backwardSlices = THCudaTensor_newWithSize2d(batchsize*size1*size2,kW*kH*nInputPlane);
 
-// backprop gradinput into the slices
-  THCudaTensor_addmm(backwardSlices, 0, 1, gradOutput, kernels);
+	for(int split=0; split<nsplits; split++)
+	{
+      THCudaTensor* gradOutputSplit = THCudaTensor_newNarrow(gradOutput, 0, split*newbatchsize, newbatchsize);
+      THCudaTensor* gradInputSplit = THCudaTensor_newNarrow(gradInput, 0, split*newbatchsize, newbatchsize);
+   	THCudaTensor_resize2d(gradOutputSplit, newbatchsize*size1*size2, nOutputPlane);
+		// backprop gradinput into the slices
+  	   THCudaTensor_addmm(backwardSlices, 0, 1, gradOutputSplit, kernels);
+	   THCudaTensor_resize4d(gradOutputSplit, newbatchsize, size1, size2, nOutputPlane);
+	   unsliceGradient(backwardSlices, gradInputSplit, gradOutputSplit, kH, kW, dH, dW, padup, paddown, padleft, padright);
+	}
 
 
 // we resize gradOutput back to what it was...
   THCudaTensor_resize4d(gradOutput, batchsize, size1, size2, nOutputPlane);
-
-
-	unsliceGradient(backwardSlices, gradInput, gradOutput, kH, kW, dH, dW, padup, paddown, padleft, padright);
 
 	THCudaTensor_free(backwardSlices);
 
@@ -577,16 +722,10 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   long size1 = gradOutput->size[1];
   long size2 = gradOutput->size[2];
 
-  THCudaTensor* kernelSlices = THCudaTensor_newWithSize2d(batchsize*size1*size2,kW*kH*nInputPlane);
-  sliceInput(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright);
-
-//  THCudaTensor *kernels = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "weight", "torch.CudaTensor");
   THCudaTensor *gradWeight = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradWeight", "torch.CudaTensor");
   THCudaTensor *gradBias = (THCudaTensor *)luaT_getfieldcheckudata(L, 1, "gradBias", "torch.CudaTensor");
 
-//  printf("accgradparameters");
-
-  THCudaTensor_resize2d(gradOutput, batchsize*size1* size2, nOutputPlane);
+//  THCudaTensor_resize2d(gradOutput, batchsize*size1* size2, nOutputPlane);
 
   float* ptrgradbias = THCudaTensor_data(gradBias);
   float* ptrgradoutput  = THCudaTensor_data(gradOutput);
@@ -594,18 +733,39 @@ static int cunxn_SpatialConvolutionUnfold_accGradParameters(lua_State *L)
   dim3 threadsgradbias (32,32);
 
   THCudaTensor_resize2d(gradWeight, nOutputPlane, kW*kH*nInputPlane);
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 
-	THCudaTensor_addmm(gradWeight, 1, scale, gradOutput, kernelSlices); 
+
+
+  size_t freeMem;
+  THCudaCheck(cudaMemGetInfo (&freeMem, NULL));
+  int nsplits=1;
+  while(batchsize/nsplits*size1*size2*kW*kH*nInputPlane * 4 > freeMem) 
+  {
+		nsplits *= 2;
+  }
+  int newbatchsize=batchsize/nsplits;
+  THCudaTensor* kernelSlices = THCudaTensor_newWithSize2d(newbatchsize*size1*size2,kW*kH*nInputPlane);
+
+	for(int split=0; split<nsplits; split++)
+	{
+      THCudaTensor* gradOutputSplit = THCudaTensor_newNarrow(gradOutput, 0, split*newbatchsize, newbatchsize);
+	   THCudaTensor_resize2d(gradOutputSplit, newbatchsize*size1* size2, nOutputPlane);
+      THCudaTensor_transpose(gradOutputSplit, NULL, 0, 1);
+      THCudaTensor* inputSplit = THCudaTensor_newNarrow(input, 0, split*newbatchsize, newbatchsize);
+	   sliceInput(inputSplit, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright);
+		THCudaTensor_addmm(gradWeight, 1, scale, gradOutputSplit, kernelSlices); 
+	}
+
+
 	computeGradBias32 <<<blocksgradbias, threadsgradbias>>>  (ptrgradbias, ptrgradoutput, size1, size2, nOutputPlane, scale, batchsize, batchstride);
 
-  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
+//  THCudaTensor_transpose(gradOutput, NULL, 0, 1);
 //  THCudaTensor_transpose(gradWeight, NULL, 0, 1);
 
   THCudaTensor_resize4d(gradWeight, nOutputPlane, kH, kW, nInputPlane);
 
 // we resize gradOutput back to what it was...
-  THCudaTensor_resize4d(gradOutput, batchsize, size1, size2, nOutputPlane);
+//  THCudaTensor_resize4d(gradOutput, batchsize, size1, size2, nOutputPlane);
 	THCudaTensor_free(kernelSlices);
 
 return 1;
