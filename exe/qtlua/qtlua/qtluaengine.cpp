@@ -126,7 +126,7 @@ luaQ_setup(lua_State *L, QtLuaEngine::Private *d)
   lua_createtable(L, 0, 0);
   lua_rawset(L, LUA_REGISTRYINDEX);
   // package.preload["qt"]
-  lua_getfield(L, LUA_GLOBALSINDEX, "package");
+  lua_getglobal(L, "package");
   if (lua_istable(L, -1)) 
     {
       lua_getfield(L, -1, "preload");
