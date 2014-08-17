@@ -25,7 +25,7 @@ The module doesn't require fixed-size inputs but it will work faster in :
 The module switches between fully-connected and conv at training time if possible.
 
 Backprop : 
-- momentum and weight decay (disabled by default) are applied during the call to accGradParameters().
+- momentum and weight decay (m=1 and wd=0 by default) are applied during the call to accGradParameters().
 - accGradParameters is disabled if the learning rate is 0.
 - autoLR(masterLR, sensitivity) activates adaGrad scheduling.
 - only updateParameters updates the weights.
@@ -74,8 +74,8 @@ function SpatialConvolution:__init(nInputPlane, nOutputPlane, kW, kH, dW, dH, pa
    self:reset()
    
    self.mode='conv' -- can be : 'conv', 'trivial', 'fc'
-	self.allowUnfold=false
-   self.learningRate=0
+   self.allowUnfold=true
+   self.learningRate=0 
    self.momentum=1 -- so accGradParameters actually adds up to the gradient tensors
    self.weightDecay=0
    self.gpucompatible = true
