@@ -215,7 +215,7 @@ function SpatialConvolution:updateOutputFC(input)
 end
 
 function SpatialConvolution:updateOutputConv(input)
-	if self.allowUnfold then 
+	if self.allowUnfold and input:type()=='torch.CudaTensor' then 
 		input.nxn.SpatialConvolutionUnfold_updateOutput(self, input)
 	else
 	   input.nxn.SpatialConvolution_updateOutput(self, input)
@@ -294,7 +294,7 @@ function SpatialConvolution:updateGradInputFC(input, gradOutput)
 end
 
 function SpatialConvolution:updateGradInputConv(input, gradOutput)
-	if self.allowUnfold then 
+	if self.allowUnfold and input:type()=='torch.CudaTensor' then 
 		input.nxn.SpatialConvolutionUnfold_updateGradInput(self, input, gradOutput)
 	else
    	input.nxn.SpatialConvolution_updateGradInput(self, input, gradOutput)
@@ -359,7 +359,7 @@ function SpatialConvolution:accGradParametersFC(input, gradOutput, scale)
 end
 
 function SpatialConvolution:accGradParametersConv(input, gradOutput, scale)
-	if self.allowUnfold then 
+	if self.allowUnfold and input:type()=='torch.CudaTensor' then 
 		input.nxn.SpatialConvolutionUnfold_accGradParameters(self, input, gradOutput, scale) 
 	else
    	input.nxn.SpatialConvolution_accGradParameters(self, input, gradOutput, scale) 
