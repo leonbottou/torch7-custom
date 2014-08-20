@@ -24,15 +24,87 @@ result = kernelSlices * weights^T
 
 Then the result is resized to obtain a 4D tensor as output.
 Input can be zero-padded (only if you provide the values).
-Strides in convolution : dW, dH.
+Strides in convolution : dW, dH. */ 
 
-*/ 
+
 
 /* -------------------------------------- */
 /* Generic functions                      */
 /* -------------------------------------- */
 
-/* sliceInput takes an input tensor and stores  
+/* fillRow : 
+-	give the coordinates of the output pixel (y_out, x_out)
+-	give the size of the kernel (kH, kW, nInputPlane) 
+-	the strides (dW, dH)
+-	the paddings (up and left only)
+-	give the pointer to the row in kernelSlices
+It will fill the row with the proper data to build the Toeplitz matrix. */ 
+
+void nxn_(fillRow)(real* ksliceptr_row, real* inputptr, int batchidx, int y_out, int x_out, int kH, int kW, int dH, int dW, int isize1, int isize2, int nInputPlane, int inputstride0, int inputstride1, int inputstride2, int padup, int padleft)
+{
+	real* inputdata = inputptr + batchidx*inputstride0;
+	int yslice, xslice, y_in, x_in;
+	y_in=y_out*dH-padup;
+	x_in=x_out*dW-padleft;
+	for(yslice=0; yslice<kH; yslice++)
+	{
+		for(xslice=0; xslice<kW; xslice++)
+		{
+			real* kptrtmp = ksliceptr_row + yslice * (kW*nInputPlane) + xslice*nInputPlane;
+			if(y_in+yslice < 0 || y_in+yslice >= isize1 || x_in+xslice < 0 || x_in+xslice >= isize2) 
+			{
+				memset(kptrtmp, 0, nInputPlane*sizeof(real));
+			}
+			else
+			{
+				real* iptrtmp = inputdata + (y_in+yslice) * inputstride1 + (x_in+xslice) * inputstride2;
+				memcpy(kptrtmp, iptrtmp, nInputPlane*sizeof(real));
+			}
+		}
+	}
+}
+
+
+
+
+
+/* addRow : 
+-	give the coordinates of the output pixel (y_out, x_out)
+-	give the size of the kernel (kH, kW, nInputPlane) 
+-	the strides (dW, dH)
+-	the paddings (up and left only)
+-	give the pointer to the row in kernelSlices
+It will add up the values of the row and sum them in the input tensor. (useful for gradInput) */ 
+
+void nxn_(addRow)(real* ksliceptr_row, real* inputptr, int batchidx, int y_out, int x_out, int kH, int kW, int dH, int dW, int isize1, int isize2, int nInputPlane, int inputstride0, int inputstride1, int inputstride2, int padup, int padleft)
+{
+	real* inputdata = inputptr + batchidx*inputstride0;
+	int yslice, xslice, y_in, x_in;
+	y_in=y_out*dH-padup;
+	x_in=x_out*dW-padleft;
+	for(yslice=0; yslice<kH; yslice++)
+	{
+		for(xslice=0; xslice<kW; xslice++)
+		{
+			real* kptrtmp = ksliceptr_row + yslice * (kW*nInputPlane) + xslice*nInputPlane;
+			if(!(y_in+yslice < 0 || y_in+yslice >= isize1 || x_in+xslice < 0 || x_in+xslice >= isize2)) 
+			{
+				real* iptrtmp = inputdata + (y_in+yslice) * inputstride1 + (x_in+xslice) * inputstride2;
+				int it;
+				for(it=0; it<nInputPlane; it++) 
+				{
+					#pragma omp atomic
+					iptrtmp[it] += kptrtmp[it];
+				}
+			}
+		}
+	}
+}
+
+
+
+
+/* Toeplitz takes an input tensor and stores  
    stores the corresponding Toeplitz matrix in   
    the kernelSlices tensor, assuming it has the
    proper size. 
@@ -43,8 +115,10 @@ Strides in convolution : dW, dH.
    We just loop over the input pixels and copy what they need.
    Whenever possible, we memcpy blocks of size kW*nInputPlane.
 
-*/
-void nxn_(sliceInput)(THTensor *input, THTensor* kernelSlices, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright)
+	If add==1, then we do the reverse operation, and add up the values of the Toeplitz matrix
+	(useful to obtain gradInput). */
+
+void nxn_(Toeplitz)(THTensor *input, THTensor* kernelSlices, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright, int kslicerow_min, int kslicerow_max, int add)
 {
 	/* find the size of kernelslices */
 	int batchsize = input->size[0];
@@ -54,105 +128,57 @@ void nxn_(sliceInput)(THTensor *input, THTensor* kernelSlices, int kH, int kW, i
 	int size1 = (isize1 - kH + padup + paddown) / dH + 1;
 	int size2 = (isize2 - kW + padleft + padright) / dW + 1;
 
-	THTensor_(resize2d)(kernelSlices, batchsize*size1*size2, kW*kH*nInputPlane);
-	THTensor_(fill)(kernelSlices, 0);
+	int inputstride0 = input->stride[0];
+	int inputstride1 = input->stride[1];
+	int inputstride2 = input->stride[2];
 
+	real* inputptr = THTensor_(data)(input);
+
+	int numrows=kslicerow_max-kslicerow_min;
+	real* kslicedata=THTensor_(data)(kernelSlices);
+	THTensor_(resize2d)(kernelSlices, numrows, kW*kH*nInputPlane);
+
+	int rowidx;
+	int y_out, x_out;
 	int batchidx;
-#pragma omp parallel for private(batchidx)
-	for (batchidx=0; batchidx<batchsize; batchidx++)
+	#pragma omp parallel for private(rowidx)
+	for (rowidx=0; rowidx<numrows; rowidx++)
 	{
-		real* inputdata=THTensor_(data)(input) + batchidx*input->stride[0];
-		real* kslicedata=THTensor_(data)(kernelSlices) + batchidx*size1*size2*kW*kH*nInputPlane;
-
-		int y_out, x_out, y_in, x_in, yslice, xslice;
-		for (y_out=0; y_out<size1; y_out++)
+		batchidx = (kslicerow_min + rowidx) / (size1*size2);
+		y_out=(kslicerow_min + rowidx - batchidx*(size1*size2)) / size2;
+		x_out=(kslicerow_min + rowidx - batchidx*(size1*size2)) % size2;
+		real* ksliceptr_row = kslicedata + rowidx * (kW*kH*nInputPlane);
+		if(add) 
 		{
-			y_in=y_out*dH-padup;
-			for(yslice=0; yslice<kH; yslice++)
-			{
-				if(y_in+yslice < 0 || y_in+yslice >= isize1) continue;
-				for (x_out=0; x_out<size2; x_out++)
-				{
-					x_in=x_out*dW-padleft;
-					if(x_in >= 0 && x_in+kW < isize2)
-					{
-						real* kptrtmp = kslicedata + (y_out*size2+x_out) * (kW*kH*nInputPlane) + yslice * (kW*nInputPlane);
-						real* iptrtmp = inputdata + (y_in+yslice) * input->stride[1] + (x_in) * input->stride[2];
-						memcpy(kptrtmp, iptrtmp, kW*nInputPlane*sizeof(real));
-					}
-					else
-					{
-						for(xslice=0; xslice<kW; xslice++)
-						{
-							if(x_in+xslice < 0 || x_in+xslice >= isize2) continue;
-							real* kptrtmp = kslicedata + (y_out*size2+x_out) * (kW*kH*nInputPlane) + yslice * (kW*nInputPlane) + xslice*nInputPlane;
-							real* iptrtmp = inputdata + (y_in+yslice) * input->stride[1] + (x_in+xslice) * input->stride[2];
-							memcpy(kptrtmp, iptrtmp, nInputPlane*sizeof(real));
-						}
-					}
-				}
-			}
+			nxn_(addRow)(ksliceptr_row, inputptr, batchidx, y_out, x_out, kH, kW, dH, dW, isize1, isize2, nInputPlane, inputstride0, inputstride1, inputstride2, padup, padleft);
+		}
+		else
+		{
+			nxn_(fillRow)(ksliceptr_row, inputptr, batchidx, y_out, x_out, kH, kW, dH, dW, isize1, isize2, nInputPlane, inputstride0, inputstride1, inputstride2, padup, padleft);
 		}
 	}
 }
 
-/* unsliceGradient does the same as sliceInput, except 
-   it sums up the values from the Toeplitz matrix to obtain
-   the gradInput tensor.
-
-   It takes as input a Toeplitz matrix backwardSlices and a
-   gradInput tensor of same size as the input.
-
-*/
 
 
-void nxn_(unsliceGradient)(THTensor *backwardSlices, THTensor *gradInput, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright)
+/* sliceInput is the forward wrapper around Toeplitz */
+
+inline void nxn_(sliceInput)(THTensor *input, THTensor* kernelSlices, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright, int kslicerow_min, int kslicerow_max)
 {
-	/* find the size of kernelslices */
-	int batchsize = gradInput->size[0];
-	int isize1 = gradInput->size[1];
-	int isize2 = gradInput->size[2];
-	int nInputPlane = gradInput->size[3];
-	int size1 = (isize1 - kH + padup + paddown) / dH + 1;
-	int size2 = (isize2 - kW + padleft + padright) / dW + 1;
-
-	THTensor_(fill)(gradInput, 0);
-	THTensor_(resize2d)(backwardSlices, batchsize*size1*size2, kW*kH*nInputPlane);
-
-	int batchidx;
-#pragma omp parallel for private(batchidx)
-	for (batchidx=0; batchidx<batchsize; batchidx++)
-	{
-		real* gradInputdata=THTensor_(data)(gradInput) + batchidx*gradInput->stride[0];
-		real* bslicedata=THTensor_(data)(backwardSlices) + batchidx*size1*size2*kW*kH*nInputPlane;
-
-		int y_out, x_out, y_in, x_in, yslice, xslice;
-		for (y_out=0; y_out<size1; y_out++)
-		{
-			y_in=y_out*dH-padup;
-			for(yslice=0; yslice<kH; yslice++)
-			{
-				if(y_in+yslice < 0 || y_in+yslice >= isize1) continue;
-				for (x_out=0; x_out<size2; x_out++)
-				{
-					x_in=x_out*dW-padleft;
-					for(xslice=0; xslice<kW; xslice++)
-					{
-						if(x_in+xslice < 0 || x_in+xslice >= isize2) continue;
-						real* bptrtmp = bslicedata + (y_out*size2+x_out) * (kW*kH*nInputPlane) + yslice * (kW*nInputPlane) + xslice*nInputPlane;
-						real* gptrtmp = gradInputdata + (y_in+yslice) * gradInput->stride[1] + (x_in+xslice) * gradInput->stride[2];
-						int it;
-						for (it=0; it<nInputPlane; it++)
-						{
-							gptrtmp[it] += bptrtmp[it];
-						}
-					}
-				}
-			}
-		}
-	}
-
+	nxn_(Toeplitz)(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max, 0);
 }
+
+
+/* unsliceGradient is the backward wrapper around Toeplitz */
+
+inline void nxn_(unsliceGradient)(THTensor *input, THTensor* kernelSlices, int kH, int kW, int dH, int dW, int padup, int paddown, int padleft, int padright, int kslicerow_min, int kslicerow_max)
+{
+	nxn_(Toeplitz)(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max, 1);
+}
+
+
+
+
 
 /* -------------------------------------- */
 /* Torch nxn wrappers                     */
@@ -162,8 +188,6 @@ void nxn_(unsliceGradient)(THTensor *backwardSlices, THTensor *gradInput, int kH
 static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 {
 	THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
-
-	int nsplits = luaT_getfieldcheckint(L, 1, "nsplits");
 
 	int dW = luaT_getfieldcheckint(L, 1, "dW");
 	int dH = luaT_getfieldcheckint(L, 1, "dH");
@@ -183,38 +207,45 @@ static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 	int size1 = (isize1 - kH + padup + paddown) / dH + 1;
 	int size2 = (isize2 - kW + padleft + padright) / dW + 1;
 
-
 	THTensor *kernels = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
 	THTensor_(resize2d)(kernels, nOutputPlane, kW*kH*nInputPlane);
 	THTensor_(transpose)(kernels, NULL, 0, 1);
 
 	THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
-	THTensor_(resize4d)(output, batchsize, size1, size2, nOutputPlane);
-
-	THTensor *kernelSlices = luaT_checkudata(L, 3, torch_Tensor);
-	THTensor_(resize3d)(kernelSlices, batchsize, size1*size2, kW*kH*nInputPlane);
+	THTensor_(resize2d)(output, batchsize* size1* size2, nOutputPlane);
 
 
-	int newbatchsize=(batchsize+nsplits-1)/nsplits;
+	/* here we can set an upper limit to the number of rows of the unfolded input */
+	/* however it is still unclear how to pick the proper limit */
+
+	int totalNumRows=batchsize*size1*size2;
+	int ompthr=omp_get_max_threads();
+	int rowlimit = MIN(totalNumRows, nOutputPlane*ompthr); /* so the unfolded matrix split is of same shape as kernels */
+	
+	int numSplits=(totalNumRows*ompthr+rowlimit-1)/rowlimit;
+	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
+
 	int split;
-#pragma omp parallel for private(split)
-	for(split=0; split<nsplits; split++)
+	#pragma omp parallel for private(split)
+	for(split=0; split<numSplits; split++)
 	{
-		int splitsize=newbatchsize;
-		if(split*newbatchsize+splitsize > batchsize)
+		int splitSize=numRowsInSplit;
+		if(split*numRowsInSplit+splitSize > totalNumRows)
 		{
-			splitsize=batchsize-split*newbatchsize;
+			splitSize=totalNumRows-split*numRowsInSplit;
 		}
-		THTensor* kSliceSplit = THTensor_(newNarrow)(kernelSlices, 0, split*newbatchsize, splitsize);
-		THTensor* inputSplit  = THTensor_(newNarrow)(input, 0, split*newbatchsize, splitsize);
-		THTensor* outputsplit = THTensor_(newNarrow)(output, 0, split*newbatchsize, splitsize);
-		THTensor_(resize2d)(outputsplit, splitsize* size1* size2, nOutputPlane);
+		THTensor* kSlicesSplit = THTensor_(newWithSize2d)(splitSize, kW*kH*nInputPlane);
 
-		nxn_(sliceInput)(inputSplit, kSliceSplit, kH, kW, dH, dW, padup, paddown, padleft, padright);
-		THTensor_(addmm)(outputsplit, 1, outputsplit, 1, kSliceSplit, kernels);
+		int kslicerow_min = split*numRowsInSplit;
+		int kslicerow_max = split*numRowsInSplit + splitSize;
 
+		THTensor* outputSplit = THTensor_(newNarrow)(output, 0, kslicerow_min, splitSize);
+		nxn_(sliceInput)(input, kSlicesSplit, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max);
+		THTensor_(addmm)(outputSplit, 0, outputSplit, 1, kSlicesSplit, kernels);
+	
+		THTensor_(free)(kSlicesSplit);
 	}
-
+	THTensor_(resize4d)(output, batchsize, size1, size2, nOutputPlane);
 
 	THTensor_(transpose)(kernels, NULL, 0, 1);
 	THTensor_(resize4d)(kernels, nOutputPlane, kH, kW, nInputPlane);
@@ -230,14 +261,16 @@ static int nxn_(SpatialConvolutionUnfold_updateGradInput)(lua_State *L)
 	THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
 	THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
 	THTensor_(resizeAs)(gradInput, input);
+	THTensor_(fill)(gradInput, 0);
+
 	THTensor *kernels = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+
 	int dW = luaT_getfieldcheckint(L, 1, "dW");
 	int dH = luaT_getfieldcheckint(L, 1, "dH");
 
 	int kW = luaT_getfieldcheckint(L, 1, "kW");
 	int kH = luaT_getfieldcheckint(L, 1, "kH");
 	int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-	THArgCheck( nOutputPlane == gradOutput->size[input->nDimension == 4 ? 1 : 0], 1, "Number of output features is not equal to nOutputPlane" );
 	
 	int padleft = luaT_getfieldcheckint(L, 1, "padleft");
 	int padright = luaT_getfieldcheckint(L, 1, "padright");
@@ -250,33 +283,43 @@ static int nxn_(SpatialConvolutionUnfold_updateGradInput)(lua_State *L)
 	int nInputPlane = input->size[3];
 	int size1 = (isize1 - kH + padup + paddown) / dH + 1;
 	int size2 = (isize2 - kW + padleft + padright) / dW + 1;
+
+	/* here we can set an upper limit to the number of rows of the unfolded gradInput */
+	/* however it is still unclear how to pick the proper limit */
+
+	int totalNumRows=batchsize*size1*size2;
+	int ompthr=omp_get_max_threads();
+	int rowlimit = MIN(totalNumRows, kW*kH*nInputPlane*ompthr); /* so the unfolded matrix split is of same shape as kernels */
 	
-	THTensor* backwardSlices = THTensor_(newWithSize3d)(batchsize,size1*size2,kW*kH*nInputPlane);
+	int numSplits=(totalNumRows+rowlimit-1)/rowlimit;
+	numSplits *= ompthr;
+	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
 
-        int nsplits = luaT_getfieldcheckint(L, 1, "nsplits");
-	
-	int newbatchsize=(batchsize+nsplits-1)/nsplits;
-        int split;
-#pragma omp parallel for private(split)
-        for(split=0; split<nsplits; split++)
-        {
-                int splitsize=newbatchsize;
-                if(split*newbatchsize+splitsize > batchsize)
-                {
-                        splitsize=batchsize-split*newbatchsize;
-                }
-                THTensor* bSliceSplit = THTensor_(newNarrow)(backwardSlices, 0, split*newbatchsize, splitsize);
-		THTensor_(resize2d)(bSliceSplit, splitsize*size1*size2, kW*kH*nInputPlane);
-                THTensor* ginputSplit  = THTensor_(newNarrow)(gradInput, 0, split*newbatchsize, splitsize);
-                THTensor* goutputsplit = THTensor_(newNarrow)(gradOutput, 0, split*newbatchsize, splitsize);
-                THTensor_(resize2d)(goutputsplit, splitsize* size1* size2, nOutputPlane);
+	THTensor_(resize2d)(gradOutput,totalNumRows,nOutputPlane);
+	THTensor_(resize2d)(kernels, nOutputPlane, kW*kH*nInputPlane);
 
-                THTensor_(addmm)(bSliceSplit, 0, bSliceSplit, 1, goutputsplit, kernels);
-                nxn_(unsliceGradient)(bSliceSplit, ginputSplit, kH, kW, dH, dW, padup, paddown, padleft, padright);
+	int split;
+	#pragma omp parallel for private(split)
+	for(split=0; split<numSplits; split++)
+	{
+		int splitSize=numRowsInSplit;
+		if(split*numRowsInSplit+splitSize > totalNumRows)
+		{
+			splitSize=totalNumRows-split*numRowsInSplit;
+		}
+		THTensor* kSlicesSplit = THTensor_(newWithSize2d)(splitSize, kW*kH*nInputPlane);
 
-        }
+		int kslicerow_min = split*numRowsInSplit;
+		int kslicerow_max = split*numRowsInSplit + splitSize;
 
-	THTensor_(free)(backwardSlices);
+		THTensor* gradOutputSplit = THTensor_(newNarrow)(gradOutput, 0, kslicerow_min, splitSize);
+      THTensor_(addmm)(kSlicesSplit, 0, kSlicesSplit, 1, gradOutputSplit, kernels);
+		nxn_(unsliceGradient)(gradInput, kSlicesSplit, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max);
+		THTensor_(free)(kSlicesSplit);
+	}
+
+	THTensor_(resize4d)(kernels, nOutputPlane, kH, kW, nInputPlane);
+
 	return 0;
 }
 
