@@ -359,7 +359,7 @@ function SpatialConvolution:accGradParametersFC(input, gradOutput, scale)
 end
 
 function SpatialConvolution:accGradParametersConv(input, gradOutput, scale)
-	if self.allowUnfold and input:type()=='torch.CudaTensor' then 
+	if self.allowUnfold then 
 		input.nxn.SpatialConvolutionUnfold_accGradParameters(self, input, gradOutput, scale) 
 	else
    	input.nxn.SpatialConvolution_accGradParameters(self, input, gradOutput, scale) 

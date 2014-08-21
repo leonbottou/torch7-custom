@@ -13,6 +13,10 @@
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X,Y) ((X) < (Y) ? (Y) : (X))
 
+/* 1GB buffer */
+#define MAX_BUFFER_SIZE 1024*1024*1024
+
+
 /* We implement here a convolution algorithm that unfolds a matrix into 
 something close to a Toeplitz matrix ("kernelSlices") in a way that if 
 you multiply it by a matrix of flattened filters you do a convolution : 
@@ -229,6 +233,7 @@ static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 	#pragma omp parallel for private(split)
 	for(split=0; split<numSplits; split++)
 	{
+		if(split*numRowsInSplit >= totalNumRows) continue;
 		int splitSize=numRowsInSplit;
 		if(split*numRowsInSplit+splitSize > totalNumRows)
 		{
@@ -315,6 +320,7 @@ static int nxn_(SpatialConvolutionUnfold_updateGradInput)(lua_State *L)
 	#pragma omp parallel for private(split)
 	for(split=0; split<numSplits; split++)
 	{
+		if(split*numRowsInSplit >= totalNumRows) continue;
 		int splitSize=numRowsInSplit;
 		if(split*numRowsInSplit+splitSize > totalNumRows)
 		{
@@ -332,6 +338,7 @@ static int nxn_(SpatialConvolutionUnfold_updateGradInput)(lua_State *L)
 	}
 
 	THTensor_(resize4d)(kernels, nOutputPlane, kH, kW, nInputPlane);
+	THTensor_(resize4d)(gradOutput, batchsize, size1, size2, nOutputPlane);
 
 	return 0;
 }
@@ -339,28 +346,91 @@ static int nxn_(SpatialConvolutionUnfold_updateGradInput)(lua_State *L)
 
 static int nxn_(SpatialConvolutionUnfold_accGradParameters)(lua_State *L)
 {
-/*	THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
+	THTensor *input = luaT_checkudata(L, 2, torch_Tensor);
 	THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
+	THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
+	THTensor *gradBias = luaT_getfieldcheckudata(L, 1, "gradBias", torch_Tensor);
 	real scale = luaL_optnumber(L, 4, 1);
 
-	int stridex = luaT_getfieldcheckint(L, 1, "dW");
-	int stridey = luaT_getfieldcheckint(L, 1, "dH");
+	int dW = luaT_getfieldcheckint(L, 1, "dW");
+	int dH = luaT_getfieldcheckint(L, 1, "dH");
 
+	int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+	int kW = luaT_getfieldcheckint(L, 1, "kW");
+	int kH = luaT_getfieldcheckint(L, 1, "kH");
+	int nInputPlane = luaT_getfieldcheckint(L, 1, "nInputPlane");
+	assert(gradWeight->size[0]==nOutputPlane);
+	assert(gradWeight->size[1]==kH);
+	assert(gradWeight->size[2]==kW);
+	assert(gradWeight->size[3]==nInputPlane);
+	
 	int padleft = luaT_getfieldcheckint(L, 1, "padleft");
 	int padright = luaT_getfieldcheckint(L, 1, "padright");
-	int padtop = luaT_getfieldcheckint(L, 1, "padtop");
-	int padbottom = luaT_getfieldcheckint(L, 1, "padbottom");
+	int padup = luaT_getfieldcheckint(L, 1, "padtop");
+	int paddown = luaT_getfieldcheckint(L, 1, "padbottom");
 
-	int overlap = luaT_getfieldcheckint(L, 1, "overlap");
+	int batchsize=gradOutput->size[0];
+	int size1=gradOutput->size[1];
+	int size2=gradOutput->size[2];
+	assert(nOutputPlane==gradOutput->size[3]);
+	
+	THTensor_(resize2d)(gradOutput, batchsize*size1*size2, nOutputPlane);
 
-	    int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
-	    THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "tmpgradweight", torch_Tensor);
-	    THTensor *tmpgradweight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
-	//printf("transposing");
-	THTensor_(transpose)(gradWeight,tmpgradweight, 0, 1);
-	gradWeight = THTensor_(newContiguous)(gradWeight);
-	//printf("transposing done");*/
+	/* gradBias computation (we sum up gradOutput) */
+	THTensor *ones = THTensor_(newWithSize2d)(1, size1*size2*batchsize);
+	THTensor_(fill)(ones, 1);
+	
+	THTensor_(resize2d)(gradBias, 1, nOutputPlane);
+	THTensor_(addmm)(gradBias, 1, gradBias, scale, ones, gradOutput);
+	THTensor_(free)(ones);
+	THTensor_(resize1d)(gradBias, nOutputPlane);
 
+
+	/* gradWeight computation : */
+
+	THTensor_(resize2d)(gradWeight, nOutputPlane, kH*kW*nInputPlane);
+	int totalNumRows=size1*size2*batchsize;	
+
+	/* split version : 
+	   we cannot parallelize matrix multiplications for gradWeight 
+	   so we are going to trust BLAS for the multi-core stuff 
+		hard-coded 1GB buffer size limit (at the beginning of file) */
+
+	int ompthr=omp_get_max_threads();
+	int rowlimit = MAX_BUFFER_SIZE / (nInputPlane*kH*kW*sizeof(real));
+	int numSplits=(totalNumRows+rowlimit-1)/rowlimit;
+	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
+	int split;
+
+	for(split=0; split<numSplits; split++)
+	{
+		int splitSize=numRowsInSplit;
+		if(split*numRowsInSplit+splitSize > totalNumRows)
+		{
+			splitSize=totalNumRows-split*numRowsInSplit;
+		}
+		int kslicerow_min = split*numRowsInSplit;
+		int kslicerow_max = split*numRowsInSplit + splitSize;
+		THTensor* kSlicesSplit = THTensor_(newWithSize2d)(splitSize, kW*kH*nInputPlane);
+		nxn_(sliceInput)(input, kSlicesSplit, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max);
+		THTensor* gradOutputSplit = THTensor_(newNarrow)(gradOutput, 0, kslicerow_min, splitSize);
+		THTensor_(transpose)(gradOutputSplit, NULL, 0, 1);
+		THTensor_(addmm)(gradWeight, 1, gradWeight, scale, gradOutputSplit, kSlicesSplit);
+		THTensor_(free)(kSlicesSplit);
+	}
+
+
+	/* no split version : */
+	/*THTensor* kernelSlices = THTensor_(newWithSize2d)(totalNumRows, kW*kH*nInputPlane);
+	nxn_(sliceInput)(input, kernelSlices, kH, kW, dH, dW, padup, paddown, padleft, padright, 0, totalNumRows);
+	THTensor_(transpose)(gradOutput, NULL, 0, 1);
+	THTensor_(addmm)(gradWeight, 1, gradWeight, scale, gradOutput, kernelSlices);
+	THTensor_(transpose)(gradOutput, NULL, 0, 1);
+	THTensor_(free)(kernelSlices);*/
+
+
+	THTensor_(resize4d)(gradOutput, batchsize, size1, size2, nOutputPlane);
+	THTensor_(resize4d)(gradWeight, nOutputPlane, kH, kW, nInputPlane);
 
 	/* luaL_error(L, "not implemented"); */
 	return 0;
