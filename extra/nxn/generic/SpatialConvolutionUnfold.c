@@ -393,18 +393,32 @@ static int nxn_(SpatialConvolutionUnfold_accGradParameters)(lua_State *L)
 
 	/* split version : 
 	   we cannot parallelize matrix multiplications for gradWeight 
-	   so we are going to trust BLAS for the multi-core stuff 
-		hard-coded 1GB buffer size limit (at the beginning of file) */
+	   so we are going to do them in blocks, and sum them up after.
+		1GB buffer size limit at the beginning of file is hardcoded */
 
 	int ompthr=omp_get_max_threads();
-	int rowlimit = MAX_BUFFER_SIZE / (nInputPlane*kH*kW*sizeof(real));
-	int numSplits=(totalNumRows+rowlimit-1)/rowlimit;
+	int numSplits = ompthr;
+	int sizepersplit = (MAX_BUFFER_SIZE / numSplits);
+	int rowlimit = (sizepersplit - (int)(nOutputPlane*nInputPlane*kH*kW*sizeof(real))) / (int)(nInputPlane*kH*kW*sizeof(real));
+
+	while (rowlimit < 0)
+	{
+		numSplits--;
+		if(numSplits < 0) luaL_error(L, "doesn't fit in memory...");
+		sizepersplit = (MAX_BUFFER_SIZE / numSplits);
+		rowlimit = (sizepersplit - (int)(nOutputPlane*nInputPlane*kH*kW*sizeof(real))) / (int)(nInputPlane*kH*kW*sizeof(real));
+	} 
+
 	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
 	int split;
-
+	printf("sizepersplit : %d\n", sizepersplit);
+	printf("numSplits : %d\n", numSplits);
+	printf("rowlimit : %d\n", rowlimit);
+	#pragma omp parallel for private(split)
 	for(split=0; split<numSplits; split++)
 	{
 		int splitSize=numRowsInSplit;
+		if(split*numRowsInSplit >= totalNumRows) continue;
 		if(split*numRowsInSplit+splitSize > totalNumRows)
 		{
 			splitSize=totalNumRows-split*numRowsInSplit;
@@ -412,11 +426,15 @@ static int nxn_(SpatialConvolutionUnfold_accGradParameters)(lua_State *L)
 		int kslicerow_min = split*numRowsInSplit;
 		int kslicerow_max = split*numRowsInSplit + splitSize;
 		THTensor* kSlicesSplit = THTensor_(newWithSize2d)(splitSize, kW*kH*nInputPlane);
+		THTensor* gradWeightSplit = THTensor_(newWithSize2d)(nOutputPlane, kH*kW*nInputPlane);
 		nxn_(sliceInput)(input, kSlicesSplit, kH, kW, dH, dW, padup, paddown, padleft, padright, kslicerow_min, kslicerow_max);
 		THTensor* gradOutputSplit = THTensor_(newNarrow)(gradOutput, 0, kslicerow_min, splitSize);
 		THTensor_(transpose)(gradOutputSplit, NULL, 0, 1);
-		THTensor_(addmm)(gradWeight, 1, gradWeight, scale, gradOutputSplit, kSlicesSplit);
+		THTensor_(addmm)(gradWeightSplit, 0, gradWeightSplit, scale, gradOutputSplit, kSlicesSplit);
+		#pragma omp critical
+		THTensor_(cadd)(gradWeight, gradWeight, 1, gradWeightSplit);
 		THTensor_(free)(kSlicesSplit);
+		THTensor_(free)(gradWeightSplit);
 	}
 
 
