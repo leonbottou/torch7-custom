@@ -411,9 +411,6 @@ static int nxn_(SpatialConvolutionUnfold_accGradParameters)(lua_State *L)
 
 	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
 	int split;
-	printf("sizepersplit : %d\n", sizepersplit);
-	printf("numSplits : %d\n", numSplits);
-	printf("rowlimit : %d\n", rowlimit);
 	#pragma omp parallel for private(split)
 	for(split=0; split<numSplits; split++)
 	{
