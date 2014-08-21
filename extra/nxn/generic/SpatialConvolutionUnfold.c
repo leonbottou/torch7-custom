@@ -214,7 +214,6 @@ static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 	THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
 	THTensor_(resize2d)(output, batchsize* size1* size2, nOutputPlane);
 
-
 	/* here we can set an upper limit to the number of rows of the unfolded input */
 	/* however it is still unclear how to pick the proper limit */
 
@@ -222,7 +221,8 @@ static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 	int ompthr=omp_get_max_threads();
 	int rowlimit = MIN(totalNumRows, nOutputPlane*ompthr); /* so the unfolded matrix split is of same shape as kernels */
 	
-	int numSplits=(totalNumRows*ompthr+rowlimit-1)/rowlimit;
+	int numSplits=(totalNumRows+rowlimit-1)/rowlimit;
+	numSplits *= ompthr;
 	int numRowsInSplit=(totalNumRows+numSplits-1)/numSplits;
 
 	int split;
@@ -245,10 +245,23 @@ static int nxn_(SpatialConvolutionUnfold_updateOutput)(lua_State *L)
 	
 		THTensor_(free)(kSlicesSplit);
 	}
-	THTensor_(resize4d)(output, batchsize, size1, size2, nOutputPlane);
 
 	THTensor_(transpose)(kernels, NULL, 0, 1);
 	THTensor_(resize4d)(kernels, nOutputPlane, kH, kW, nInputPlane);
+
+
+	THTensor *bias = luaT_getfieldcheckudata(L, 1, "bias", torch_Tensor);
+	assert(bias->size[0]==nOutputPlane);
+
+	THTensor_(resize2d)(bias, 1, bias->size[0]);
+	THTensor *ones = THTensor_(newWithSize2d)(size1*size2*batchsize, 1);
+	THTensor_(fill)(ones, 1);
+	THTensor_(addmm)(output, 1, output, 1, ones, bias);
+
+	THTensor_(resize4d)(output, batchsize, size1, size2, nOutputPlane);
+
+	THTensor_(resize1d)(bias, nOutputPlane);
+	THTensor_(free)(ones);
 
 	return 0;
 }
